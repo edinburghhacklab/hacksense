@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+
+rundir = sys.argv[1]
+loopinterval = 1
+respawninterval = 5
+
+ignore_re = re.compile(r'(^\.|^#.*#$|.*~$|\.(bak|orig)$)')
+
+devnull_r = open('/dev/null', 'r')
+devnull_w = open('/dev/null', 'w')
+
+tasks = {}
+lastexit = {}
+
+def start_process(script):
+    return subprocess.Popen(os.path.join(rundir, script), close_fds=True, stdin=devnull_r, stdout=devnull_w, stderr=devnull_w)
+
+def main():
+    if not os.path.isdir(rundir):
+        return
+    for script in os.listdir(rundir):
+        if ignore_re.match(script):
+            continue
+        if tasks.has_key(script):
+            if tasks[script].poll() is not None:
+                logging.warning("%s: exited (rc=%s)" % (script, tasks[script].returncode))
+                lastexit[script] = time.time()
+                del tasks[script]
+            else:
+                # still running
+                pass
+        else:
+            if lastexit.has_key(script):
+                if time.time()-lastexit[script] > respawninterval:
+                    try:
+                        tasks[script] = start_process(script)
+                        logging.info("%s: restarted" % (script))
+                    except OSError:
+                        logging.error("%s: restart failed" % (script))
+                else:
+                    # exited too recently to restart
+                    pass
+            else:
+                try:
+                    tasks[script] = start_process(script)
+                    logging.info("%s: starting" % (script))
+                except OSError:
+                    logging.error("%s: start failed" % (script))
+
+while True:
+    logging.getLogger().setLevel(logging.INFO)
+    try:
+        main()
+        time.sleep(loopinterval)
+    except KeyboardInterrupt:
+        logging.info("Ctrl-C received, terminating processes")
+        for script, p in tasks.iteritems():
+            logging.info("%s: terminating" % (script))
+            p.terminate()
+        sys.exit()

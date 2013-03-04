@@ -1,0 +1,37 @@
+#!/usr/bin/env python
+
+import pika
+from scapy.all import *
+import time
+
+amqp_host = "localhost"
+amqp_exchange = "events"
+amqp_topic = "network.arp-sighting"
+
+last_seen = {}
+repeat_timeout = 300
+
+connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host))
+channel = connection.channel()
+channel.exchange_declare(exchange=amqp_exchange, type="topic")
+
+def arp_monitor_callback(pkt):
+    if ARP in pkt and pkt[ARP].op in (1,2): #who-has or is-at
+        now = time.time()
+        cache_key = pkt.sprintf("%ARP.hwsrc% %ARP.psrc%")
+        if last_seen.has_key(cache_key) and time.time() - last_seen[cache_key] < repeat_timeout:
+            # don't repeat recent sightings
+            return
+        else:
+            channel.basic_publish(exchange=amqp_exchange,
+                                  routing_key=amqp_topic,
+                                  body="",
+                                  properties=pika.BasicProperties(
+                                      timestamp=time.time(),
+                                      headers={"mac": pkt.sprintf("%ARP.hwsrc%"), "ip": pkt.sprintf("%ARP.psrc%")}
+                                  ))
+            last_seen[cache_key] = time.time()
+
+sniff(prn=arp_monitor_callback, filter="arp", store=0)
+
+connection.close()

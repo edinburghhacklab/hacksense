@@ -1,0 +1,69 @@
+#!/usr/bin/env python
+
+import os
+import pika
+import portio
+import sys
+import time
+
+debug = False
+datareg = 0x378
+statusreg = 0x379
+amqp_host = "amqp.hacklab"
+amqp_exchange = "events"
+
+def send_message(tag, headers, body):
+    if debug:
+        print "send> %s %s %s" % (tag, headers, body)
+    channel.basic_publish(exchange=amqp_exchange,
+                          routing_key=tag,
+                          body=body,
+                          properties=pika.BasicProperties(timestamp=time.time(), headers=headers))
+
+connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host))
+channel = connection.channel()
+channel.exchange_declare(exchange=amqp_exchange, exchange_type="topic")
+
+# acquire IO permissions
+for reg in [datareg, statusreg]:
+    error = portio.ioperm(reg, 1, 1)
+    if error:
+        print 'Permission denied for %x: %s' % (reg, os.strerror(status))
+        sys.exit(1)
+
+# set data pin 0 high to supply power
+portio.outb(0x01, datareg) 
+
+last_switch_status = None
+last_pir_status    = None
+
+send_message('meta.message', {}, 'walle-readport is starting')
+
+while True:
+
+    status        = portio.inb(statusreg)
+    switch_status = bool(status & 0x08)
+    pir_status    = bool(status & 0x10)
+    
+    if debug:
+        print status, switch_status, pir_status
+
+    # Store the initial readings but don't perform any action
+    if last_switch_status is None:
+        last_switch_status = switch_status
+    if last_pir_status is None:
+        last_pir_status = pir_status
+
+    if switch_status != last_switch_status:
+        if switch_status is True:
+            send_message('sensors.openswitch', {'status': 'open'}, '')
+        else:
+            send_message('sensors.openswitch', {'status': 'closed'}, '')
+        last_switch_status = switch_status
+
+    if pir_status != last_pir_status:
+        if pir_status is True:
+            send_message('sensors.pir_triggered', {}, '')
+        last_pir_status = pir_status
+
+    time.sleep(0.5)
