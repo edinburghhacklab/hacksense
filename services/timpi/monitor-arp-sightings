@@ -4,7 +4,7 @@ import pika
 from scapy.all import *
 import time
 
-amqp_host = "localhost"
+amqp_host = "amqp.hacklab"
 amqp_exchange = "events"
 amqp_topic = "network.arp-sighting"
 
