@@ -7,3 +7,4 @@
 *.bak
 *.pyc
 *.pyo
+log/*.log
