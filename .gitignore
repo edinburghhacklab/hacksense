@@ -7,4 +7,5 @@
 *.bak
 *.pyc
 *.pyo
+lib/config.json
 log/*.log
