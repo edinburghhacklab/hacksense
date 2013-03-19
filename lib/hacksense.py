@@ -1,5 +1,6 @@
 # -*- python -*-
 
+import json
 import os
 import pika
 import socket
@@ -10,6 +11,13 @@ __all__ = ["amqp_host", "amqp_exchange", "get_amqp_channel"]
 
 amqp_host = "amqp.hacklab"
 amqp_exchange = "events"
+
+try:
+    filename = os.path.join(os.path.dirname(__file__), 'config.json')
+    config = json.load(open(filename, 'r'))
+except Exception, e:
+    print 'Could not load config from %s: %r' % (filename, e)
+    config = {}
 
 class AMQPTopic(object):
     def __init__(self):
