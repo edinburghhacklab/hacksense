@@ -1,0 +1,185 @@
+#!/usr/bin/env python
+
+import logging
+import Queue
+import RPIO
+import random
+import threading
+import time
+import sys
+
+sys.path.insert(0, "/srv/hacksense/lib")
+import hacksense
+
+# PIN IDs for buttons attached to Raspberry Pi GPIO
+RPIO.setmode(RPIO.BCM)
+RED_ID = 17
+GREEN_ID = 18
+
+# How long must a button be held for a "long press" (in seconds)
+LONG_PRESS = 1.0
+
+# Debounce setting for RPIO (in milliseconds)
+DEBOUNCE_TIMEOUT = 30
+
+# A cross-thread queue containing button events from GPIO
+global event_queue
+event_queue = Queue.Queue()
+
+# A cross-thread queue containing messages to be sent to the Hacksense network
+global message_queue
+message_queue = Queue.Queue()
+
+# For testing, this sends dummy button events via event_queue
+class DummyEventThread(threading.Thread):
+    def run(self):
+        while True:
+            b = random.sample(['red', 'green'], 1)[0]
+            t = random.random()*3
+            if t >= 1:
+                print "random %.1fs (long)" % (t)
+            else:
+                print "random %.1fs (short)" % (t)
+            event_queue.put((time.time(), b, 'down'))
+            time.sleep(t)
+            event_queue.put((time.time(), b, 'up'))
+            time.sleep(1)
+
+# This thread reads the GPIO inputs and sends events via event_queue
+class EventThread(threading.Thread):
+    def run(self):
+        def callback(gpio_id, val):
+            if gpio_id == RED_ID:
+                if val == 0:
+                    event_queue.put((time.time(), 'red', 'down'))
+                else:
+                    event_queue.put((time.time(), 'red', 'up'))
+            elif gpio_id == GREEN_ID:
+                if val == 0:
+                    event_queue.put((time.time(), 'green', 'down'))
+                else:
+                    event_queue.put((time.time(), 'green', 'up'))
+        RPIO.add_interrupt_callback(RED_ID, callback,
+                                    edge="both",
+                                    pull_up_down=RPIO.PUD_UP,
+                                    threaded_callback=False,
+                                    debounce_timeout_ms=DEBOUNCE_TIMEOUT)
+        RPIO.add_interrupt_callback(GREEN_ID, callback,
+                                    edge="both",
+                                    pull_up_down=RPIO.PUD_UP,
+                                    threaded_callback=False,
+                                    debounce_timeout_ms=DEBOUNCE_TIMEOUT)
+        RPIO.wait_for_interrupts(threaded=False)
+
+# This reads output events from message_queue and sends them to Hacksense
+class MessageThread(threading.Thread):
+    def run(self):
+        conn = hacksense.AMQPTopic()
+        conn.publish("meta.message", {}, "doorbot button-reader is starting")
+        while True:
+            msg = message_queue.get()
+            logging.debug("message> %r" % (msg,))
+            conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
+
+# A state-machine to accept button-up/down events and detect short-long presses
+class Button(object):
+
+    STATE_UP   = 0 # Button is up
+    STATE_DOWN = 1 # Button is down, pending release or long-press timeout
+    STATE_WAIT = 2 # Button is down, event processed and waiting for release to reset the cycle
+
+    def __init__(self, long_press=1.0, short_callback=None, long_callback=None):
+        self.long_press = long_press
+        self.short_callback = short_callback
+        self.long_callback = long_callback
+        self.state = self.STATE_UP
+        self.state_change = time.time()
+
+    def debug(self, message):
+        logging.debug("%s %f %s" % (self, time.time(), message))
+
+    def down(self):
+        if self.state == self.STATE_UP:
+            self.state = self.STATE_DOWN
+            self.state_change = time.time()
+            self.debug("UP -> DOWN")
+
+    # This method is called from a timeout-event, which allows
+    # us to detect a long-press *before* the button is released.
+    #
+    # If we waited for a button-up event then the user would need
+    # to time their long-presses. By using a timeout we can allow 
+    # events to provide feedback to the user, allowing them to release
+    # the button after an action has started.
+    def alarm(self):
+        if self.state == self.STATE_DOWN:
+            if time.time()-self.state_change >= self.long_press:
+                self.state = self.STATE_WAIT
+                self.state_change = time.time()
+                self.debug("DOWN -> WAIT (long press detected via timeout)")
+                if self.long_callback:
+                    self.long_callback()
+
+    def up(self):
+        if self.state == self.STATE_WAIT:
+            self.state = self.STATE_UP
+            self.state_change = time.time()
+            self.debug("WAIT -> UP")
+        elif self.state == self.STATE_DOWN:
+            if time.time()-self.state_change >= self.long_press:
+                self.state = self.STATE_UP
+                self.state_change = time.time()
+                self.debug("DOWN -> UP (long press detected via button-up)")
+                if self.long_callback:
+                    self.long_callback()
+            else:
+                self.state = self.STATE_UP
+                self.state_change = time.time()
+                self.debug("DOWN -> UP (short press)")
+                if self.short_callback:
+                    self.short_callback()
+
+# Enable verbose logging        
+#logging.getLogger().setLevel(logging.DEBUG)
+
+# Initialise the button event producer thread
+eventthread = EventThread()
+eventthread.daemon = True
+eventthread.start()
+
+# Initialise the AMQP event consumer thread
+messagethread = MessageThread()
+messagethread.daemon = True
+messagethread.start()
+
+# Callbacks for Button() instances
+def red_short():
+    message_queue.put((time.time(), 'red', 'shortpress'))
+def red_long():
+    message_queue.put((time.time(), 'red', 'longpress'))
+def green_short():
+    message_queue.put((time.time(), 'green', 'shortpress'))
+def green_long():
+    message_queue.put((time.time(), 'green', 'longpress'))
+
+red = Button(long_press=LONG_PRESS, short_callback=red_short, long_callback=red_long)
+green = Button(long_press=LONG_PRESS, short_callback=green_short, long_callback=green_long)
+
+while True:
+    try:
+        e = event_queue.get(block=True, timeout=LONG_PRESS)
+        message_queue.put(e)
+        if e[1] == 'red':
+            if e[2] == 'up':
+                red.up()
+            elif e[2] == 'down':
+                red.down()
+        elif e[1] == 'green':
+            if e[2] == 'up':
+                green.up()
+            elif e[2] == 'down':
+                green.down()
+    except Queue.Empty:
+        # call the alarm() methods regularly so long-presses can be detected
+        red.alarm()
+        green.alarm()
