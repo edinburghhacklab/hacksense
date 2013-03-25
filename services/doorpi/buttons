@@ -74,12 +74,17 @@ class EventThread(threading.Thread):
 # This reads output events from message_queue and sends them to Hacksense
 class MessageThread(threading.Thread):
     def run(self):
-        conn = hacksense.AMQPTopic()
-        conn.publish("meta.message", {}, "doorbot button-reader is starting")
         while True:
-            msg = message_queue.get()
-            logging.debug("message> %r" % (msg,))
-            conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
+            try:
+                print "connecting to AMQP"
+                conn = hacksense.AMQPTopic()
+                conn.publish("meta.message", {}, "doorbot button-reader is starting")
+                while True:
+                    msg = message_queue.get()
+                    logging.debug("message> %r" % (msg,))
+                    conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
+            except:
+                time.sleep(1)
 
 # A state-machine to accept button-up/down events and detect short-long presses
 class Button(object):
