@@ -9,12 +9,14 @@ import time
 import urllib
 import urllib2
 
+hacksense.setup_logging(redirect=True)
+
 open_secret = hacksense.config.get("open_secret", "")
 closed_secret = hacksense.config.get("closed_secret", "")
 status_timeout = 7200
 
-global stored_status
-stored_status = (0, 'closed')
+#global stored_status
+#stored_status = (0, 'closed')
 
 def push_status_to_server(status):
     if status == 'open':
@@ -41,19 +43,24 @@ def say(text):
     conn.publish("actions.speak", {"data": text})
 
 def callback(ch, method, properties, body):
-    global stored_status
+    global rconn
 
     topic = method.routing_key
     timestamp = properties.timestamp
     headers = properties.headers
 
+    logging.info("%s %s %r" % (timestamp, topic, headers))
+
     if time.time()-timestamp > 10:
         logging.warning("Ignoring delayed button message")
         return
 
-    #current_status_timestamp, current_status = rr.get('hacksense:labstatus')
-    current_status_timestamp, current_status = stored_status
+    current_status_timestamp = float(rconn.get('hacksense:labstatus:timestamp') or 0)
+    current_status = rconn.get('hacksense:labstatus:status')
     current_status_age = time.time()-current_status_timestamp
+
+    logging.info("Current status: %s %s" % (current_status_timestamp, current_status))
+    logging.info("Current status age: %s" % (current_status_age))
 
     if topic in ['doorbot.buttons.green.shortpress', 'doorbot.buttons.green.longpress']:
         new_status = 'open'
@@ -68,30 +75,38 @@ def callback(ch, method, properties, body):
         press = 'short'
 
     if new_status == current_status and current_status_age < status_timeout and press == 'short':
+        logging.info("status is already %s" % (new_status))
         say("The status is already %s" % (new_status))
         return
         
     if new_status == 'open':
-        #rr.put('hacksense:labstatus', (time.time(), 'open'))
-        stored_status = (time.time(), 'open')
+        rconn.set('hacksense:labstatus:timestamp', time.time())
+        rconn.set('hacksense:labstatus:status', 'open')
+        logging.info("opening...")
         lcd("Opening...")
         if push_status_to_server('open'):
+            logging.info("set to open")
             lcd("Status: Open")
             say("Status set to open")
         else:
+            logging.info("set to open, tweet failed")
             lcd("Status: Open", "Tweet failed")
             say("Sorry, I couldn't reach twitter")
 
     elif new_status == 'closed':
-        #rr.put('hacksense:labstatus', (time.time(), 'closed'))
-        stored_status = (time.time(), 'closed')
+        rconn.set('hacksense:labstatus:timestamp', time.time())
+        rconn.set('hacksense:labstatus:status', 'closed')
+        logging.info("closing...")
         lcd("Closing...")
         if push_status_to_server('closed'):
+            logging.info("set to closed")
             lcd("Status: Closed")
             say("Status set to closed")
         else:
+            logging.info("set to closed, tweet failed")
             lcd("Status: Closed", "Tweet failed")
             say("Sorry, I couldn't reach twitter")
 
+rconn = hacksense.RedisConnection().redis
 conn = hacksense.AMQPTopic()
 conn.subscribe_callback("doorbot.buttons.#", callback)
