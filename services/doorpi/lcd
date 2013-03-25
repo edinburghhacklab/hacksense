@@ -10,6 +10,8 @@ import hacksense
 import RPIO as GPIO
 import time
 
+hacksense.setup_logging(redirect=True)
+
 # Define GPIO to LCD mapping
 # (these are the PINs on Hacklab's Doorbot protoshield)
 LCD_RS = 4

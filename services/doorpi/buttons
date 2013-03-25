@@ -11,6 +11,8 @@ import sys
 sys.path.insert(0, "/srv/hacksense/lib")
 import hacksense
 
+hacksense.setup_logging(redirect=True)
+
 # PIN IDs for buttons attached to Raspberry Pi GPIO
 RPIO.setmode(RPIO.BCM)
 RED_ID = 17
