@@ -67,9 +67,14 @@ class MessageThread(threading.Thread):
                 conn = hacksense.AMQPTopic()
                 conn.publish("meta.message", {}, "doorbot button-reader is starting")
                 while True:
-                    msg = message_queue.get()
+                    msg = message_queue.get() # timestamp, button, action, press_time
                     logging.debug("message> %r" % (msg,))
-                    conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
+                    if len(msg) >= 5:
+                        conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
+                                     headers={"press_time": int(msg[3]*1000),
+                                              "reason": msg[4]})
+                    else:
+                        conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
             except Exception, e:
                 logging.exception("Exception in MessageThread")
                 time.sleep(1)
@@ -106,12 +111,13 @@ class Button(object):
     # the button after an action has started.
     def alarm(self):
         if self.state == self.STATE_DOWN:
-            if time.time()-self.state_change >= self.long_press:
+            press_time = time.time()-self.state_change
+            if press_time >= self.long_press:
                 self.state = self.STATE_WAIT
                 self.state_change = time.time()
-                self.debug("DOWN -> WAIT (long press detected via timeout)")
+                self.debug("DOWN -> WAIT (long press detected via timeout, %.3fs)" % (press_time))
                 if self.long_callback:
-                    self.long_callback()
+                    self.long_callback(press_time=press_time, reason="timeout")
 
     def up(self):
         if self.state == self.STATE_WAIT:
@@ -119,21 +125,22 @@ class Button(object):
             self.state_change = time.time()
             self.debug("WAIT -> UP")
         elif self.state == self.STATE_DOWN:
-            if time.time()-self.state_change >= self.long_press:
+            press_time = time.time()-self.state_change
+            if press_time >= self.long_press:
                 self.state = self.STATE_UP
                 self.state_change = time.time()
-                self.debug("DOWN -> UP (long press detected via button-up)")
+                self.debug("DOWN -> UP (long press detected via button-up, %.3fs)" % (press_time))
                 if self.long_callback:
-                    self.long_callback()
+                    self.long_callback(press_time=press_time, reason="button-up")
             else:
                 self.state = self.STATE_UP
                 self.state_change = time.time()
-                self.debug("DOWN -> UP (short press)")
+                self.debug("DOWN -> UP (short press, %.3fs)" % (press_time))
                 if self.short_callback:
-                    self.short_callback()
+                    self.short_callback(press_time=press_time, reason="button-up")
 
 # Enable verbose logging        
-#logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)
 
 # Initialise the button event producer thread
 eventthread = EventThread()
@@ -146,14 +153,14 @@ messagethread.daemon = True
 messagethread.start()
 
 # Callbacks for Button() instances
-def red_short():
-    message_queue.put((time.time(), 'red', 'shortpress'))
-def red_long():
-    message_queue.put((time.time(), 'red', 'longpress'))
-def green_short():
-    message_queue.put((time.time(), 'green', 'shortpress'))
-def green_long():
-    message_queue.put((time.time(), 'green', 'longpress'))
+def red_short(press_time, reason=None):
+    message_queue.put((time.time(), 'red', 'shortpress', press_time, reason))
+def red_long(press_time, reason=None):
+    message_queue.put((time.time(), 'red', 'longpress', press_time, reason))
+def green_short(press_time, reason=None):
+    message_queue.put((time.time(), 'green', 'shortpress', press_time, reason))
+def green_long(press_time, reason=None):
+    message_queue.put((time.time(), 'green', 'longpress', press_time, reason))
 
 red = Button(long_press=LONG_PRESS, short_callback=red_short, long_callback=red_long)
 green = Button(long_press=LONG_PRESS, short_callback=green_short, long_callback=green_long)
