@@ -32,6 +32,21 @@ event_queue = Queue.Queue()
 global message_queue
 message_queue = Queue.Queue()
 
+# For testing, this sends dummy button events via event_queue
+class DummyEventThread(threading.Thread):
+    def run(self):
+        while True:
+            b = random.sample(['red', 'green'], 1)[0]
+            t = random.random()*3
+            if t >= 1:
+                print "random %.1fs (long)" % (t)
+            else:
+                print "random %.1fs (short)" % (t)
+            event_queue.put((time.time(), b, 'down'))
+            time.sleep(t)
+            event_queue.put((time.time(), b, 'up'))
+            time.sleep(1)
+
 # This thread reads the GPIO inputs and sends events via event_queue
 class EventThread(threading.Thread):
     def run(self):
@@ -143,6 +158,7 @@ class Button(object):
 logging.getLogger().setLevel(logging.DEBUG)
 
 # Initialise the button event producer thread
+#eventthread = DummyEventThread()
 eventthread = EventThread()
 eventthread.daemon = True
 eventthread.start()
