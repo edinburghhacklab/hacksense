@@ -63,14 +63,15 @@ class MessageThread(threading.Thread):
     def run(self):
         while True:
             try:
-                print "connecting to AMQP"
+                logging.debug("connecting to AMQP")
                 conn = hacksense.AMQPTopic()
                 conn.publish("meta.message", {}, "doorbot button-reader is starting")
                 while True:
                     msg = message_queue.get()
                     logging.debug("message> %r" % (msg,))
                     conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
-            except:
+            except Exception, e:
+                logging.exception("Exception in MessageThread")
                 time.sleep(1)
 
 # A state-machine to accept button-up/down events and detect short-long presses
