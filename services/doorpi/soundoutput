@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, "/srv/hacksense/lib")
 
 import hacksense
+import logging
 import os
 import signal
 import subprocess
@@ -18,8 +19,12 @@ espeak_default_pitch = 50
 espeak_default_speed = 120
 espeak_default_timeout = max_playtime
 
+hacksense.setup_logging(redirect=True)
+logging.getLogger().setLevel(logging.DEBUG)
+
 # runs a command and terminates it after a specified timeout
 def call_with_timeout(command, timeout):
+    logging.info('call_with_timeout(%r, %r)' % (command, timeout))
     class TimeoutException(Exception):
         pass
     def alrm_handler(signum, frame):
@@ -29,7 +34,9 @@ def call_with_timeout(command, timeout):
         signal.alarm(timeout)
         p = subprocess.Popen(command)
         retcode = p.wait()
+        logging.info('call_with_timeout: command exited with code %s' % (retcode))
     except TimeoutException:
+        logging.info('call_with_timeout: command exceeded timeout, terminating...')
         p.terminate()
         retcode = p.wait()
     finally:
@@ -81,6 +88,5 @@ def callback(ch, method, properties, body):
     except Exception, e:
         logging.exception("Exception")
 
-hacksense.setup_logging()
 conn = hacksense.AMQPTopic()
 conn.subscribe_callback(["actions.speak", "actions.play_sound"], callback)
