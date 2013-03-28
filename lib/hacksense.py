@@ -91,7 +91,11 @@ class AMQPTopic(object):
         result = self.channel.queue_declare(exclusive=True)
         queue_name = result.method.queue
 
-        self.channel.queue_bind(exchange=amqp_exchange, queue=queue_name, routing_key=topic)
+        if type(topic) is list:
+            for t in topic:
+                self.channel.queue_bind(exchange=amqp_exchange, queue=queue_name, routing_key=t)
+        else:
+            self.channel.queue_bind(exchange=amqp_exchange, queue=queue_name, routing_key=topic)
         
         self.channel.basic_consume(callback,
                                    queue=queue_name,
