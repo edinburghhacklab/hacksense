@@ -62,21 +62,13 @@ def callback(ch, method, properties, body):
     logging.info("Current status: %s %s" % (current_status_timestamp, current_status))
     logging.info("Current status age: %s" % (current_status_age))
 
-    if topic in ['doorbot.buttons.green.shortpress', 'doorbot.buttons.green.longpress']:
+    if topic in ['doorbot.buttons.green.longpress']:
         new_status = 'open'
-    elif topic in ['doorbot.buttons.red.shortpress', 'doorbot.buttons.red.longpress']:
+        press = 'long'
+    elif topic in ['doorbot.buttons.red.longpress']:
         new_status = 'closed'
-    else:
-        return
-
-    if topic in ['doorbot.buttons.green.longpress', 'doorbot.buttons.red.longpress']:
         press = 'long'
     else:
-        press = 'short'
-
-    if new_status == current_status and current_status_age < status_timeout and press == 'short':
-        logging.info("status is already %s" % (new_status))
-        say("The status is already %s" % (new_status))
         return
         
     if new_status == 'open':
