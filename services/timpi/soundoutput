@@ -1,0 +1,92 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import logging
+import os
+import signal
+import subprocess
+
+max_playtime  = 15
+
+sounds_path = "/srv/hacksense/sounds"
+
+espeak_voices = ["en", "en-n", "en-rp", "en-sc", "en-us", "en-wi", "en-wm", "en+m1"]
+espeak_default_voice = "en+m1"
+espeak_default_pitch = 50
+espeak_default_speed = 120
+espeak_default_timeout = max_playtime
+
+hacksense.setup_logging(redirect=True)
+logging.getLogger().setLevel(logging.DEBUG)
+
+# runs a command and terminates it after a specified timeout
+def call_with_timeout(command, timeout):
+    logging.info('call_with_timeout(%r, %r)' % (command, timeout))
+    class TimeoutException(Exception):
+        pass
+    def alrm_handler(signum, frame):
+        raise TimeoutException()
+    try:
+        old_handler = signal.signal(signal.SIGALRM, alrm_handler)
+        signal.alarm(timeout)
+        p = subprocess.Popen(command)
+        retcode = p.wait()
+        logging.info('call_with_timeout: command exited with code %s' % (retcode))
+    except TimeoutException:
+        logging.info('call_with_timeout: command exceeded timeout, terminating...')
+        p.terminate()
+        retcode = p.wait()
+    finally:
+        signal.signal(signal.SIGALRM, old_handler)
+    signal.alarm(0)
+    return retcode
+
+def espeak(data,
+           voice=espeak_default_voice,
+           speed=espeak_default_speed,
+           pitch=espeak_default_pitch,
+           timeout=espeak_default_timeout):
+    if voice == "random": voice = random.sample(espeak_voices, 1)[0]
+    if speed == "random": speed = random.randint(80, 450)
+    if pitch == "random": pitch = random.randint(0, 99)
+    if voice not in espeak_voices: voice = espeak_default_voice
+    if speed < 80 or speed > 450: speed = espeak_default_speed
+    if pitch < 0 or pitch > 99: pitch = espeak_default_speed
+    command = ['espeak', '-s', str(int(speed)), '-p', str(int(pitch)), '-v', voice, data]
+    call_with_timeout(command, timeout=timeout)
+
+def play(filename, timeout=max_playtime):
+    filename = os.path.join(sounds_path, filename)
+    if not os.path.isfile(filename):
+        raise Exception('File %s not found' % (filename))
+    base, ext = os.path.splitext(filename)
+    if ext == '.mp3':
+        command = ['mpg123', filename]
+        call_with_timeout(command, timeout=timeout)
+    else:
+        command = ['play', filename]
+        call_with_timeout(command, timeout=timeout)
+
+def callback(ch, method, properties, body):
+    topic = method.routing_key
+    timestamp = properties.timestamp or time.time()
+    headers = properties.headers
+
+    try:
+        if topic == "actions.speak":
+            espeak(headers.get("data", body),
+                   voice=headers.get("espeak_voice", espeak_default_voice),
+                   speed=headers.get("espeak_speed", espeak_default_speed),
+                   pitch=headers.get("espeak_pitch", espeak_default_pitch))
+        elif topic == "actions.play_sound":
+            play(headers.get("filename"))
+        else:
+            raise Exception("Unknown topic %s" % (topic))
+    except Exception, e:
+        logging.exception("Exception")
+
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback(["actions.speak", "actions.play_sound"], callback)
