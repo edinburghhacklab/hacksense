@@ -13,8 +13,8 @@ max_playtime  = 15
 
 sounds_path = "/srv/hacksense/sounds"
 
-espeak_voices = ["en", "en-n", "en-rp", "en-sc", "en-us", "en-wi", "en-wm"]
-espeak_default_voice = "en"
+espeak_voices = ["en", "en-n", "en-rp", "en-sc", "en-us", "en-wi", "en-wm", "en+m1"]
+espeak_default_voice = "en+m1"
 espeak_default_pitch = 50
 espeak_default_speed = 120
 espeak_default_timeout = max_playtime
