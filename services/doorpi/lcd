@@ -155,4 +155,5 @@ def callback(ch, method, properties, body):
 GPIO.cleanup()
 lcd = LCD()
 conn = hacksense.AMQPTopic()
+conn.publish("doorbot.lcd.start", {}, '')
 conn.subscribe_callback("doorbot.lcd.#", callback)

@@ -51,16 +51,27 @@ def callback(ch, method, properties, body):
 
     logging.info("%s %s %r" % (timestamp, topic, headers))
 
-    if time.time()-timestamp > 10:
-        logging.warning("Ignoring delayed button message")
-        return
-
     current_status_timestamp = float(rconn.get('hacksense:labstatus:timestamp') or 0)
     current_status = rconn.get('hacksense:labstatus:status')
     current_status_age = time.time()-current_status_timestamp
 
     logging.info("Current status: %s %s" % (current_status_timestamp, current_status))
     logging.info("Current status age: %s" % (current_status_age))
+
+    if topic == "doorbot.lcd.start":
+        # lcd has started, send the current status
+        time.sleep(1)
+        if current_status == "open":
+            lcd("Status: Open")
+        elif current_status == "closed":
+            lcd("Status: Closed")
+        else:
+            lcd("Status: Unknown")
+        return
+
+    if time.time()-timestamp > 10:
+        logging.warning("Ignoring delayed button message")
+        return
 
     if topic in ['doorbot.buttons.green.longpress']:
         new_status = 'open'
@@ -101,4 +112,4 @@ def callback(ch, method, properties, body):
 
 rconn = hacksense.RedisConnection().redis
 conn = hacksense.AMQPTopic()
-conn.subscribe_callback("doorbot.buttons.#", callback)
+conn.subscribe_callback(["doorbot.lcd.start", "doorbot.buttons.#"], callback)
