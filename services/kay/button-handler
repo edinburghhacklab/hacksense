@@ -1,0 +1,35 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import logging
+import time
+
+hacksense.setup_logging(redirect=True)
+
+def callback(ch, method, properties, body):
+    global conn
+
+    topic = method.routing_key
+    timestamp = properties.timestamp
+    headers = properties.headers
+
+    logging.info("%s %s %r" % (timestamp, topic, headers))
+
+    if time.time()-timestamp > 10:
+        logging.warning("Ignoring delayed button message")
+        return
+
+    if topic == 'doorbot.buttons.red.shortpress':
+        conn.publish('actions.speak', {'data': 'tomato',
+                                       'espeak_voice': 'en-rp'})
+    elif topic == 'doorbot.buttons.green.shortpress':
+        conn.publish('actions.speak', {'data': 'tomato',
+                                       'espeak_voice': 'en-us'})
+    else:
+        return
+
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback("doorbot.buttons.#", callback)
