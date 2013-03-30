@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+#
+# Send regular time signals so that other scripts
+# can use them as callbacks instead of running their own
+# timers/threads.
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import time
+
+conn = hacksense.AMQPTopic()
+
+while True:
+    t = time.gmtime()
+    time.sleep(60-t.tm_sec)
+
+    t = time.gmtime()
+    conn.publish("timer.60")
+    if t.tm_min % 5 == 0: conn.publish("timer.300")
+    if t.tm_min % 10 == 0: conn.publish("timer.600")
+    if t.tm_min % 30 == 0: conn.publish("timer.1800")
+    if t.tm_min == 0: conn.publish("timer.3600")
+    if t.tm_hour == 0: conn.publish("timer.86400")
