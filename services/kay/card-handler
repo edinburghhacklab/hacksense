@@ -11,12 +11,21 @@ hacksense.setup_logging(redirect=True)
 logging.basicConfig()
 logging.getLogger().setLevel(logging.INFO)
 
-uids = {
-    '045C7112F32280': [('actions.speak', {'data': 'Hello Tim'}, '')],
-    '1F16B0DA': [('actions.speak', {'data': 'Hello Al'}, '')],
-    'EE0B9FF0': [('actions.speak', {'data': 'Hello Al'}, '')],
-    '04C04BB25D2B80': [('actions.speak', {'data': 'Hello Friend'}, '')]
+irc_channel = '##edinhacklabtest'
+
+uid2name = {
+    '045C7112F32280': 'Tim',
+    '1F16B0DA': 'Al',
+    'EE0B9FF0': 'Al',
+    '04C04BB25D2B80': 'Anonymous Tag'
 }
+
+uids = {}
+for uid, name in uid2name.items():
+    uids[uid] = [
+        ('actions.speak', {'data': 'Hello %s' % (name)}, ''),
+        ('irc.send', {'channel': irc_channel, 'data': '%s checked-in at the lab.' % (name)}, '')
+        ]
 
 def callback(ch, method, properties, body):
     global conn
