@@ -17,6 +17,7 @@ hacksense.setup_logging(redirect=True)
 RPIO.setmode(RPIO.BCM)
 RED_ID = 17
 GREEN_ID = 18
+PIR_ID = 7
 
 # How long must a button be held for a "long press" (in seconds)
 LONG_PRESS = 1.0
@@ -61,12 +62,20 @@ class EventThread(threading.Thread):
                     event_queue.put((time.time(), 'green', 'down'))
                 else:
                     event_queue.put((time.time(), 'green', 'up'))
+            elif gpio_id == PIR_ID:
+                if val == 1:
+                    event_queue.put((time.time(), 'pir', ''))
         RPIO.add_interrupt_callback(RED_ID, callback,
                                     edge="both",
                                     pull_up_down=RPIO.PUD_UP,
                                     threaded_callback=False,
                                     debounce_timeout_ms=DEBOUNCE_TIMEOUT)
         RPIO.add_interrupt_callback(GREEN_ID, callback,
+                                    edge="both",
+                                    pull_up_down=RPIO.PUD_UP,
+                                    threaded_callback=False,
+                                    debounce_timeout_ms=DEBOUNCE_TIMEOUT)
+        RPIO.add_interrupt_callback(PIR_ID, callback,
                                     edge="both",
                                     pull_up_down=RPIO.PUD_UP,
                                     threaded_callback=False,
@@ -84,7 +93,9 @@ class MessageThread(threading.Thread):
                 while True:
                     msg = message_queue.get() # timestamp, button, action, press_time
                     logging.debug("message> %r" % (msg,))
-                    if len(msg) >= 5:
+                    if msg[1] == "pir":
+                        conn.publish("doorbot.pir")
+                    elif len(msg) >= 5:
                         conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
                                      headers={"press_time": int(msg[3]*1000),
                                               "reason": msg[4]})
