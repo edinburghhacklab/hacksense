@@ -11,12 +11,23 @@ import urllib2
 
 hacksense.setup_logging(redirect=True)
 
+# after this amount of idle time, automatically set the status to closed
+status_timeout = 3600
+status_warning = status_timeout-300
+
+# notify of a PIR event if the lab has been idle for this amount of time
+activity_notify_period = 4500
+
+# to which channel should we send our IRC messages
+irc_channel = "*DEFAULT*"
+
+# secrets for sending status to twitter (via http://edinhacklab.com/)
 open_secret = hacksense.config.get("open_secret", "")
 closed_secret = hacksense.config.get("closed_secret", "")
-status_timeout = 7200
 
-#global stored_status
-#stored_status = (0, 'closed')
+last_activity = time.time()
+last_lcd = time.time()
+in_idle_state = False
 
 def push_status_to_server(status):
     if status == 'open':
@@ -37,19 +48,63 @@ def push_status_to_server(status):
             return False
 
 def lcd(line1, line2=""):
+    global last_lcd
+    last_lcd = max(last_lcd, time.time())
     conn.publish("doorbot.lcd.display", {"line1": line1, "line2": line2})
 
+def lcd_status():
+    current_status = rconn.get('hacksense:labstatus:status')
+    if current_status == "open":
+        lcd("Status: Open")
+    elif current_status == "closed":
+        lcd("Status: Closed")
+    else:
+        lcd("Status: Unknown")
+    
 def say(text):
     conn.publish("actions.speak", {"data": text})
 
-def callback(ch, method, properties, body):
+def irc(text):
+    conn.publish("irc.send", {"channel": irc_channel, "data": text})
+
+def publish(topic, headers={}, body=""):
+    conn.publish(topic, headers, body)
+
+def set_status(new_status):
     global rconn
+    
+    if new_status == "open":
+        rconn.set('hacksense:labstatus:timestamp', time.time())
+        rconn.set('hacksense:labstatus:status', 'open')
+        logging.info("opening...")
+        lcd("Opening...")
+        irc("The lab is open!")
+        if push_status_to_server('open'):
+            logging.info("set to open")
+            lcd("Status: Open")
+            say("Status set to open")
+        else:
+            logging.info("set to open, tweet failed")
+            lcd("Status: Open", "Tweet failed")
+            say("Sorry, I couldn't reach twitter")
 
-    topic = method.routing_key
-    timestamp = properties.timestamp
-    headers = properties.headers
+    elif new_status == "closed":
+        rconn.set('hacksense:labstatus:timestamp', time.time())
+        rconn.set('hacksense:labstatus:status', 'closed')
+        logging.info("closing...")
+        lcd("Closing...")
+        irc("The lab is closed.")
+        if push_status_to_server('closed'):
+            logging.info("set to closed")
+            lcd("Status: Closed")
+            say("Status set to closed")
+        else:
+            logging.info("set to closed, tweet failed")
+            lcd("Status: Closed", "Tweet failed")
+            say("Sorry, I couldn't reach twitter")
 
-    logging.info("%s %s %r" % (timestamp, topic, headers))
+def status_callback(timestamp, topic, headers, body):
+    global rconn
 
     current_status_timestamp = float(rconn.get('hacksense:labstatus:timestamp') or 0)
     current_status = rconn.get('hacksense:labstatus:status')
@@ -61,12 +116,7 @@ def callback(ch, method, properties, body):
     if topic == "doorbot.lcd.start":
         # lcd has started, send the current status
         time.sleep(1)
-        if current_status == "open":
-            lcd("Status: Open")
-        elif current_status == "closed":
-            lcd("Status: Closed")
-        else:
-            lcd("Status: Unknown")
+        lcd_status()
         return
 
     if time.time()-timestamp > 10:
@@ -81,35 +131,71 @@ def callback(ch, method, properties, body):
         press = 'long'
     else:
         return
-        
-    if new_status == 'open':
-        rconn.set('hacksense:labstatus:timestamp', time.time())
-        rconn.set('hacksense:labstatus:status', 'open')
-        logging.info("opening...")
-        lcd("Opening...")
-        if push_status_to_server('open'):
-            logging.info("set to open")
-            lcd("Status: Open")
-            say("Status set to open")
-        else:
-            logging.info("set to open, tweet failed")
-            lcd("Status: Open", "Tweet failed")
-            say("Sorry, I couldn't reach twitter")
 
-    elif new_status == 'closed':
-        rconn.set('hacksense:labstatus:timestamp', time.time())
-        rconn.set('hacksense:labstatus:status', 'closed')
-        logging.info("closing...")
-        lcd("Closing...")
-        if push_status_to_server('closed'):
-            logging.info("set to closed")
-            lcd("Status: Closed")
-            say("Status set to closed")
-        else:
-            logging.info("set to closed, tweet failed")
-            lcd("Status: Closed", "Tweet failed")
-            say("Sorry, I couldn't reach twitter")
+    set_status(new_status)
+
+def timer_callback(timestamp, topic, headers, body):
+    global in_idle_state
+
+    publish("test.message", {}, "last_activity=%s" % (last_activity))
+
+    # warn when open-status is about to time out
+    current_status = rconn.get('hacksense:labstatus:status')
+    if current_status == "open":
+        activity_age = time.time()-last_activity
+        publish("test.message", {}, "activity_age=%s" % (activity_age))
+        if activity_age > status_timeout:
+            set_status("closed")
+            in_idle_state = False
+        elif activity_age > status_warning:
+            lcd("Status: Idle")
+            say("Is anybody there? I will set the status to closed shortly.")
+            in_idle_state = True
+        
+    if time.time()-last_lcd > 60:
+        lcd_status()
+
+def activity_callback(timestamp, topic, headers, body):
+    global last_activity
+    global in_idle_state
+
+    if in_idle_state:
+        lcd_status()
+        say("Ok, leaving status open for now.")
+        in_idle_state = False
+    
+    interval = time.time()-last_activity
+    if interval > activity_notify_period:
+        irc("Someone is in the lab.")
+        publish("test.message", {}, "Signs of life in the lab (%s)" % (topic))
+
+    last_activity = max(last_activity, timestamp)
+
+def callback(ch, method, properties, body):
+    global last_activity
+    global last_lcd
+    global rconn
+
+    topic = method.routing_key
+    timestamp = properties.timestamp
+    headers = properties.headers
+
+    logging.info("%s %s %r" % (timestamp, topic, headers))
+
+    if topic.startswith("doorbot.buttons.") or topic in ["doorbot.card.swipe", "doorbot.pir"]:
+        activity_callback(timestamp, topic, headers, body)
+
+    if topic == "doorbot.lcd.display":
+        last_lcd = max(last_lcd, timestamp)
+
+    if topic == "timer.60":
+        timer_callback(timestamp, topic, headers, body)
+
+    if topic in ["doorbot.buttons.red.longpress",
+                 "doorbot.buttons.green.longpress",
+                 "doorbot.lcd.start"]:
+        status_callback(timestamp, topic, headers, body)
 
 rconn = hacksense.RedisConnection().redis
 conn = hacksense.AMQPTopic()
-conn.subscribe_callback(["doorbot.lcd.start", "doorbot.buttons.#"], callback)
+conn.subscribe_callback(["timer.60", "doorbot.#"], callback)
