@@ -6,6 +6,7 @@ sys.path.insert(0, "/srv/hacksense/lib")
 import hacksense
 import logging
 import time
+import ConfigParser
 
 hacksense.setup_logging(redirect=True)
 logging.basicConfig()
@@ -13,19 +14,24 @@ logging.getLogger().setLevel(logging.INFO)
 
 irc_channel = '##edinhacklabtest'
 
-uid2name = {
-    '045C7112F32280': 'Tim',
-    '1F16B0DA': 'Al',
-    'EE0B9FF0': 'Al',
-    '04C04BB25D2B80': 'Anonymous Tag'
-}
+config = ConfigParser.SafeConfigParser()
+config.read("/srv/hacksense/etc/people.conf")
 
 uids = {}
-for uid, name in uid2name.items():
-    uids[uid] = [
-        ('actions.speak', {'data': 'Hello %s' % (name)}, ''),
-        ('irc.send', {'channel': irc_channel, 'data': '%s checked-in at the lab.' % (name)}, '')
-        ]
+
+for section in config.sections():
+    if config.has_option(section, "cards"):
+        for uid in config.get(section, "cards").strip().split():
+            uids[uid] = []
+            if config.has_option(section, "greeting"):
+                uids[uid].append(("actions.speak",
+                                  {"data": config.get(section, "greeting").strip()},
+                                  ""))
+            if config.has_option(section, "irc_nick"):
+                uids[uid].append(("irc.send",
+                                  {"channel": irc_channel,
+                                   "data": "%s checked-in at the lab." % (config.get(section, "irc_nick".strip()))},
+                                  ""))
 
 def callback(ch, method, properties, body):
     global conn
