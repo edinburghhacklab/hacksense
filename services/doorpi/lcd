@@ -51,14 +51,10 @@ class LCD(object):
         # Initialise display
         self.lcd_init()
         self.lines("Hello!")
-        time.sleep(0.5)
+        time.sleep(1)
         self.lines("I'm Doorbot!")
-        time.sleep(0.5)
-        self.lines("I'm Doorbot!", "Ready...")
-        time.sleep(0.5)
-        self.lines("I'm Doorbot!", "Steady...")
-        time.sleep(0.5)
-        self.lines("I'm Doorbot!", "GO!")
+        time.sleep(1)
+        self.lines("Waiting for", "network...")
         
     def lcd_init(self):
         # Initialise display
