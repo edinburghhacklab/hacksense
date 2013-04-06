@@ -69,7 +69,7 @@ def setup_logging(stderr_level=logging.INFO,
 
 class AMQPTopic(object):
     def __init__(self):
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host))
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host, heartbeat_interval=30))
         self.channel = self.connection.channel()
         self.channel.exchange_declare(exchange=amqp_exchange, type="topic")
         
