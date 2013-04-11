@@ -27,6 +27,7 @@ closed_secret = hacksense.config.get("closed_secret", "")
 
 last_activity = time.time()
 last_lcd = time.time()
+last_ircstatus = 0
 in_idle_state = False
 
 def push_status_to_server(status):
@@ -102,6 +103,26 @@ def set_status(new_status):
             logging.info("set to closed, tweet failed")
             lcd("Status: Closed", "Tweet failed")
             say("Sorry, I couldn't reach twitter")
+
+def ircstatus_callback(timestamp, topic, headers, body):
+    global last_ircstatus
+
+    if time.time()-last_ircstatus < 60:
+        # only respond a maximum of once per minute
+        return
+
+    current_status = rconn.get('hacksense:labstatus:status')
+    current_status_t = float(rconn.get('hacksense:labstatus:timestamp') or 0)
+    t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_status_t))
+    if current_status == "open":
+        irc("The lab is open (since %s)" % (t))
+    elif current_status == "closed":
+        irc("The lab is closed (since %s)." % (t))
+    else:
+        irc("I don't know.")
+    irc("Last activity at %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_activity))))
+
+    last_ircstatus = time.time()
 
 def status_callback(timestamp, topic, headers, body):
     global rconn
@@ -196,6 +217,9 @@ def callback(ch, method, properties, body):
                  "doorbot.lcd.start"]:
         status_callback(timestamp, topic, headers, body)
 
+    if topic == "irc.message" and headers.get("data", "") == ".labstatus":
+        ircstatus_callback(timestamp, topic, headers, body)
+
 rconn = hacksense.RedisConnection().redis
 conn = hacksense.AMQPTopic()
-conn.subscribe_callback(["timer.60", "doorbot.#"], callback)
+conn.subscribe_callback(["timer.60", "doorbot.#", "irc.message"], callback)
