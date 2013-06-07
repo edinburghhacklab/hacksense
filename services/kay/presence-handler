@@ -1,0 +1,97 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import logging
+import os
+import socket
+import sqlite3
+import time
+
+hacksense.setup_logging(redirect=True)
+
+db_file = "/srv/hacksense/etc/presence.sqlite3"
+presence_renewal = 600  # resend the silent presence message this often
+presence_timeout = 7200 # consider the person gone after 2 hours
+                        # (don't send a public announce unless they've been gone this long)
+irc_channel = "*DEFAULT*"
+
+def parse_timestamp(t):
+    if t is None:
+        return None
+    else:
+        return time.mktime(time.strptime(t, '%Y-%m-%d %H:%M:%S'))
+
+def ip2hostname(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0].split('.', 1)[0]
+    except:
+        pass
+
+def callback(ch, method, properties, body):
+    global db
+
+    topic = method.routing_key
+    timestamp = properties.timestamp
+    headers = properties.headers
+
+    person_id = None
+
+    if topic == "doorbot.card.swipe":
+        uid = headers['uid']
+        cursor = db.cursor()
+        cursor.execute("SELECT person_id, uid FROM cards WHERE LOWER(uid) = LOWER(?)", [uid])
+        row = cursor.fetchone()
+        if row:
+            person_id = row[0]
+            cursor.execute("UPDATE cards SET last_sighting = CURRENT_TIMESTAMP WHERE LOWER(uid) = LOWER(?)", [uid])
+        else:
+            cursor.execute("INSERT INTO cards (uid, first_sighting, last_sighting) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", [uid])
+        db.commit()
+        
+    if topic == "network.arp-sighting":
+        mac = headers['mac']
+        ip = headers['ip']
+        cursor = db.cursor()
+        cursor.execute("SELECT person_id, mac FROM macs WHERE LOWER(mac) = LOWER(?)", [mac])
+        row = cursor.fetchone()
+        if row:
+            person_id = row[0]
+            cursor.execute("UPDATE macs SET last_sighting = CURRENT_TIMESTAMP WHERE LOWER(mac) = LOWER(?)", [mac])
+        else:
+            cursor.execute("INSERT INTO macs (mac, first_sighting, last_sighting) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", [mac])
+        if ip and ip.startswith('10.38.38.'):
+            cursor.execute("UPDATE macs SET ip = ? WHERE LOWER(mac) = LOWER(?)", [ip, mac])
+            hostname = ip2hostname(ip)
+            cursor.execute("UPDATE macs SET hostname = ? WHERE LOWER(mac) = LOWER(?)", [hostname, mac])
+        db.commit()
+
+    if person_id:
+        cursor = db.cursor()
+        cursor.execute("SELECT id, name, last_sighting, irc_nick, nick FROM people WHERE id = ?", [person_id])
+        row = cursor.fetchone()
+        if row:
+            (person_id, person_name, person_last_sighting, person_irc_nick, person_nick) = row
+            person_last_sighting = parse_timestamp(person_last_sighting) or 0
+            age = time.time() - person_last_sighting
+            print person_id, person_name, person_last_sighting, age
+            if age < presence_timeout:
+                print "%s is still here" % (person_name)
+                cursor.execute("UPDATE people SET last_sighting = CURRENT_TIMESTAMP WHERE id = ?", [person_id])
+            else:
+                print "%s is here" % (person_name)
+                cursor.execute("UPDATE people SET last_sighting = CURRENT_TIMESTAMP, last_announce = CURRENT_TIMESTAMP WHERE id = ?", [person_id])
+                n = person_irc_nick or person_nick or person_name
+                conn.publish("irc.send", {"channel": irc_channel, "data": "%s is at the lab." % (n)})
+            db.commit()
+
+os.environ['TZ'] = 'UTC'
+time.tzset()
+
+db = sqlite3.connect(db_file)
+db.execute("PRAGMA foreign_keys = ON;")
+
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback(["doorbot.card.swipe", "network.arp-sighting"], callback)
