@@ -69,23 +69,46 @@ def setup_logging(stderr_level=logging.INFO,
 
 class AMQPTopic(object):
     def __init__(self):
+        self.reconnect()
+
+    def reconnect(self):
         self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host, heartbeat_interval=30))
         self.channel = self.connection.channel()
-        self.channel.exchange_declare(exchange=amqp_exchange, type="topic")
+        self.channel.exchange_declare(exchange=amqp_exchange, type="topic")        
         
-    def publish(self, topic, headers={}, body=""):
+    def publish(self, topic, headers={}, body="", retry=False):
         new_headers = headers.copy()
         new_headers['src_hostname'] = socket.getfqdn()
         new_headers['src_script'] = sys.argv[0]
         new_headers['src_uid'] = os.getuid()
         new_headers['src_pid'] = os.getpid()
-        self.channel.basic_publish(exchange=amqp_exchange,
-                                   routing_key=topic,
-                                   body=body,
-                                   properties=pika.BasicProperties(
-                                     timestamp=time.time(),
-                                     headers=new_headers
-                                   ))
+        timestamp = time.time()
+        if retry:
+            delay = 1
+            max_delay = 60
+            while True:
+                try:
+                    self.channel.basic_publish(exchange=amqp_exchange,
+                                               routing_key=topic,
+                                               body=body,
+                                               properties=pika.BasicProperties(
+                                                   timestamp=timestamp,
+                                                   headers=new_headers
+                                                   ))
+                    return
+                except Exception, e:
+                    logging.exception("Publish failed (will retry in %ds)" % (delay))
+                    time.sleep(delay)
+                    delay = min(delay*2, max_delay)
+                    self.reconnect()
+        else:
+            self.channel.basic_publish(exchange=amqp_exchange,
+                                       routing_key=topic,
+                                       body=body,
+                                       properties=pika.BasicProperties(
+                                           timestamp=timestamp,
+                                           headers=new_headers
+                                           ))
 
     def subscribe_callback(self, topic, callback):
         result = self.channel.queue_declare(exclusive=True)
