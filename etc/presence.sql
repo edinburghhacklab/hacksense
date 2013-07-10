@@ -6,7 +6,9 @@ CREATE TABLE people (
   nick varchar unique,
   irc_nick varchar unique,
   last_sighting datetime,
-  last_announce datetime
+  last_announce datetime,
+  announce_public boolean default 0,
+  announce_private boolean default 1
 );
 
 CREATE TABLE macs (
@@ -16,7 +18,8 @@ CREATE TABLE macs (
   description varchar,
   ip varchar,
   first_sighting datetime DEFAULT CURRENT_TIMESTAMP,
-  last_sighting datetime
+  last_sighting datetime,
+  static boolean NOT NULL DEFAULT 0
 );
 
 CREATE TABLE cards (

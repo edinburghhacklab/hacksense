@@ -4,11 +4,13 @@ import sys
 sys.path.insert(0, "/srv/hacksense/lib")
 
 import hacksense
+import json
 import logging
 import os
 import socket
 import sqlite3
 import time
+import urllib2
 
 hacksense.setup_logging(redirect=True)
 
@@ -17,6 +19,8 @@ presence_renewal = 600  # resend the silent presence message this often
 presence_timeout = 7200 # consider the person gone after 2 hours
                         # (don't send a public announce unless they've been gone this long)
 irc_channel = "*DEFAULT*"
+dashing_auth_token = "YOUR_AUTH_TOKEN"
+dashing_widget_url = "http://kay:3030/widgets/people"
 
 def parse_timestamp(t):
     if t is None:
@@ -24,10 +28,40 @@ def parse_timestamp(t):
     else:
         return time.mktime(time.strptime(t, '%Y-%m-%d %H:%M:%S'))
 
+def friendly_age(seconds, now=300):
+    if seconds < now:
+        return "now"
+    elif seconds > 86400*3:
+        return "%dd" % (seconds//86400)
+    elif seconds > 3600:
+        return "%dh" % (seconds//3600)
+    elif seconds > 60:
+        return "%dm" % (seconds//60)
+    else:
+        return "%ds" % (seconds)
+
 def ip2hostname(ip):
     try:
         return socket.gethostbyaddr(ip)[0].split('.', 1)[0]
     except:
+        pass
+
+def update_dashing():
+    global db
+
+    data = {"auth_token": dashing_auth_token, "items": []}
+
+    cursor = db.cursor()
+    cursor.execute("SELECT name, last_sighting AS age FROM people WHERE last_sighting IS NOT NULL ORDER BY last_sighting DESC;")
+    for row in cursor.fetchall():
+        age = time.time()-parse_timestamp(row[1])
+        data["items"].append({"label": row[0], "value": friendly_age(age)})
+
+    try:
+        req = urllib2.Request(dashing_widget_url, json.dumps(data))
+        f = urllib2.urlopen(req)
+        f.read()
+    except urllib2.URLError:
         pass
 
 def callback(ch, method, properties, body):
@@ -36,6 +70,12 @@ def callback(ch, method, properties, body):
     topic = method.routing_key
     timestamp = properties.timestamp
     headers = properties.headers
+
+    if topic == "timer.60":
+        # don't attempt to process data from a timer event
+        # just update the dashboard
+        update_dashing()
+        return
 
     person_id = None
 
@@ -70,10 +110,10 @@ def callback(ch, method, properties, body):
 
     if person_id:
         cursor = db.cursor()
-        cursor.execute("SELECT id, name, last_sighting, irc_nick, nick FROM people WHERE id = ?", [person_id])
+        cursor.execute("SELECT id, name, last_sighting, irc_nick, nick, announce_public FROM people WHERE id = ?", [person_id])
         row = cursor.fetchone()
         if row:
-            (person_id, person_name, person_last_sighting, person_irc_nick, person_nick) = row
+            (person_id, person_name, person_last_sighting, person_irc_nick, person_nick, announce_public) = row
             person_last_sighting = parse_timestamp(person_last_sighting) or 0
             age = time.time() - person_last_sighting
             print person_id, person_name, person_last_sighting, age
@@ -83,9 +123,12 @@ def callback(ch, method, properties, body):
             else:
                 print "%s is here" % (person_name)
                 cursor.execute("UPDATE people SET last_sighting = CURRENT_TIMESTAMP, last_announce = CURRENT_TIMESTAMP WHERE id = ?", [person_id])
-                n = person_irc_nick or person_nick or person_name
-                conn.publish("irc.send", {"channel": irc_channel, "data": "%s is at the lab." % (n)})
+                if announce_public:
+                    n = person_irc_nick or person_nick or person_name
+                    conn.publish("irc.send", {"channel": irc_channel, "data": "%s is at the lab." % (n)})
             db.commit()
+
+    update_dashing()
 
 os.environ['TZ'] = 'UTC'
 time.tzset()
@@ -94,4 +137,4 @@ db = sqlite3.connect(db_file)
 db.execute("PRAGMA foreign_keys = ON;")
 
 conn = hacksense.AMQPTopic()
-conn.subscribe_callback(["doorbot.card.swipe", "network.arp-sighting"], callback)
+conn.subscribe_callback(["doorbot.card.swipe", "network.arp-sighting", "timer.60"], callback)
