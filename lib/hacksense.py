@@ -2,6 +2,8 @@
 
 import Queue
 import atexit
+import hashlib
+import hmac
 import json
 import logging
 import logging.handlers
@@ -75,14 +77,30 @@ class AMQPTopic(object):
         self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host, heartbeat_interval=30))
         self.channel = self.connection.channel()
         self.channel.exchange_declare(exchange=amqp_exchange, type="topic")        
-        
-    def publish(self, topic, headers={}, body="", retry=False):
+
+    def digest(self, key, timestamp, topic, headers, body):
+        h = hmac.HMAC(key, digestmod=hashlib.sha512)
+        text = ""
+        text += "%d:" % (timestamp)
+        text += "%s:" % (topic)
+        for k in sorted(headers.keys()):
+            if k != "signature":
+                text += "%s=%s:" % (k, headers[k])
+        text += "%s" % (body)
+        logging.debug("text: %s" % (text))
+        h.update(text)
+        return h.hexdigest()
+
+    def publish(self, topic, headers={}, body="", retry=False, key=None):
         new_headers = headers.copy()
         new_headers['src_hostname'] = socket.getfqdn()
         new_headers['src_script'] = sys.argv[0]
         new_headers['src_uid'] = os.getuid()
         new_headers['src_pid'] = os.getpid()
         timestamp = time.time()
+        if key:
+            signature = self.digest(key, timestamp, topic, new_headers, body)
+            new_headers['signature'] = signature
         if retry:
             delay = 1
             max_delay = 60
