@@ -8,6 +8,7 @@ import logging
 import logging.handlers
 import os
 import pika
+import redis
 import socket
 import sys
 import threading
@@ -17,6 +18,8 @@ __all__ = ["amqp_host", "amqp_exchange", "get_amqp_channel"]
 
 amqp_host = "amqp.hacklab"
 amqp_exchange = "events"
+
+redis_host = "hacksense-redis.hacklab"
 
 def setup_logging(stderr_level=logging.INFO,
                   syslog_level=logging.INFO,
@@ -129,3 +132,7 @@ class AMQPTopic(object):
                                    queue=queue_name,
                                    no_ack=True)
         self.channel.start_consuming()
+
+class RedisConnection(object):
+    def __init__(self):
+        self.redis = redis.StrictRedis(host=redis_host)
