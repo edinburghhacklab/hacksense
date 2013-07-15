@@ -1,6 +1,5 @@
 # -*- python -*-
 
-import Queue
 import atexit
 import hashlib
 import hmac
@@ -9,20 +8,15 @@ import logging
 import logging.handlers
 import os
 import pika
-import redis
 import socket
 import sys
 import threading
 import time
-import traceback
 
 __all__ = ["amqp_host", "amqp_exchange", "get_amqp_channel"]
 
 amqp_host = "amqp.hacklab"
 amqp_exchange = "events"
-
-redis_host = "hacksense-redis.hacklab"
-redis_channel = "hacksense"
 
 def setup_logging(stderr_level=logging.INFO,
                   syslog_level=logging.INFO,
@@ -135,75 +129,3 @@ class AMQPTopic(object):
                                    queue=queue_name,
                                    no_ack=True)
         self.channel.start_consuming()
-
-class RedisConnection(object):
-    def __init__(self):
-        self.redis = redis.StrictRedis(host=redis_host)
-        self.channel = redis_channel
-    def subscribe(self):
-        ps = self.redis.pubsub()
-        ps.subscribe(self.channel)
-        for message in ps.listen():
-            if message['type'] == 'message':
-                yield json.loads(message['data'])
-    def publish(self, topic, message):
-        message2 = message.copy()
-        message2['src_hostname'] = socket.getfqdn()
-        message2['src_script'] = sys.argv[0]
-        message2['src_uid'] = os.getuid()
-        message2['src_pid'] = os.getpid()
-        message2['topic'] = topic
-        if not message2.has_key('timestamp'):
-            message2['timestamp'] = time.time()
-        self.redis.publish(self.channel)
-
-class ThreadedRedisConnection(object):
-    class Publisher(threading.Thread):
-        def run(self):
-            while True:
-                msg = self.queue.get()
-                self.redis.publish(self.channel, json.dumps(msg))
-    class Subscriber(threading.Thread):
-        def run(self):
-            ps = self.redis.pubsub()
-            ps.subscribe(self.channel)
-            for message in ps.listen():
-                if message['type'] == 'message':
-                    self.queue.put(json.loads(message['data']))
-    def __init__(self):
-        self.redis = redis.StrictRedis(host=redis_host)
-        self.channel = redis_channel
-        self.subscriber = None
-        self.publisher = None
-    def publish(self, topic, message):
-        if not self.publisher:
-            logging.info("Creating publisher thread")
-            self.publisher = self.Publisher()
-            self.publisher.redis = self.redis
-            self.publisher.channel = self.channel
-            self.publisher.queue = Queue.Queue()
-            self.publisher.daemon = True
-            self.publisher.start()
-        message2 = message.copy()
-        message2['src_hostname'] = socket.getfqdn()
-        message2['src_script'] = sys.argv[0]
-        message2['src_uid'] = os.getuid()
-        message2['src_pid'] = os.getpid()
-        message2['topic'] = topic
-        if not message2.has_key('timestamp'):
-            message2['timestamp'] = time.time()
-        self.publisher.queue.put(message2)
-    def subscribe(self, timeout=None):
-        if not self.subscriber:
-            logging.info("Creating subscriber thread")
-            self.subscriber = self.Subscriber()
-            self.subscriber.redis = self.redis
-            self.subscriber.channel = self.channel
-            self.subscriber.queue = Queue.Queue()
-            self.subscriber.daemon = True
-            self.subscriber.start()
-        while True:
-            try:
-                yield self.subscriber.queue.get(block=True, timeout=timeout)
-            except Queue.Empty:
-                yield None
