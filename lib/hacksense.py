@@ -24,13 +24,6 @@ amqp_exchange = "events"
 redis_host = "hacksense-redis.hacklab"
 redis_channel = "hacksense"
 
-try:
-    filename = os.path.join(os.path.dirname(__file__), 'config.json')
-    config = json.load(open(filename, 'r'))
-except IOError, e:
-    print 'Could not load config from %s: %r' % (filename, e)
-    config = {}
-
 def setup_logging(stderr_level=logging.INFO,
                   syslog_level=logging.INFO,
                   facility=logging.handlers.SysLogHandler.LOG_USER,

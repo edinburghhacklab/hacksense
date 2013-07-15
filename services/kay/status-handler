@@ -8,6 +8,7 @@ import logging
 import time
 import urllib
 import urllib2
+import ConfigParser
 
 hacksense.setup_logging(redirect=True)
 
@@ -22,8 +23,7 @@ activity_notify_period = 4500
 irc_channel = "*DEFAULT*"
 
 # secrets for sending status to twitter (via http://edinhacklab.com/)
-open_secret = hacksense.config.get("open_secret", "")
-closed_secret = hacksense.config.get("closed_secret", "")
+twitter_secrets_file = '/srv/hacksense/etc/twitter_secrets.conf'
 
 last_activity = time.time()
 last_lcd = time.time()
@@ -31,8 +31,10 @@ last_ircstatus = 0
 in_idle_state = False
 
 def push_status_to_server(status):
+    conf = ConfigParser.ConfigParser()
+    conf.read(twitter_secrets_file)
     if status == 'open':
-        values = {'k': open_secret}
+        values = {'k': conf.get('secrets', 'open')}
         data = urllib.urlencode(values)
         req = urllib2.Request('http://www.edinburghhacklab.com/internal/occupancy.php', data)
         if urllib2.urlopen(req).read() == 'DONE':
@@ -40,7 +42,7 @@ def push_status_to_server(status):
         else:
             return False
     elif status == 'closed':
-        values = {'k': closed_secret}
+        values = {'k': conf.get('secrets', 'closed')}
         data = urllib.urlencode(values)
         req = urllib2.Request('http://www.edinburghhacklab.com/internal/occupancy.php', data)
         if urllib2.urlopen(req).read() == 'DONE':
