@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import logging
+import os
+import struct
+import time
+
+hacksense.setup_logging(redirect=True)
+
+def callback(ch, method, properties, body):
+    topic = method.routing_key
+    timestamp = properties.timestamp
+    headers = properties.headers
+    
+    try:
+        band = headers['band']
+        group = headers['rf12_grp']
+        node = headers['node']
+    except KeyError:
+        return
+
+    if band != 868:
+        return
+
+    if group != 38:
+        return
+
+    if node == 10 and len(body) == 3:
+        # temperature reading
+        unpacked = struct.unpack('=Bh', body)
+        i = unpacked[0] # index number of sensor
+        c = unpacked[1]/100.0 # temperature in celsius
+        conn.publish('temperature.g1', {'temperature': str(c)})
+
+os.environ['TZ'] = 'UTC'
+time.tzset()
+
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback(["rf12.received.raw"], callback)
