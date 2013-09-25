@@ -84,25 +84,38 @@ class EventThread(threading.Thread):
 
 # This reads output events from message_queue and sends them to Hacksense
 class MessageThread(threading.Thread):
+    def __send(self, topic, headers={}, body=""):
+        attempt = 1
+        while True:
+            try:
+                self.__conn.publish(topic, headers, body)
+                if attempt > 1:
+                    logging.warning("__send succeeded on attempt %s" % (attempt))
+                return
+            except:
+                logging.exception("Exception in MessageThread.__send")
+                time.sleep(1)
+                attempt += 1
+                self.__conn = hacksense.AMQPTopic()
     def run(self):
         while True:
             try:
                 logging.debug("connecting to AMQP")
-                conn = hacksense.AMQPTopic()
-                conn.publish("meta.message", {}, "doorbot button-reader is starting")
+                self.__conn = hacksense.AMQPTopic()
+                self.__send("meta.message", {}, "doorbot button-reader is starting")
                 while True:
                     msg = message_queue.get() # timestamp, button, action, press_time
                     logging.debug("message> %r" % (msg,))
                     if msg[1] == "pir":
-                        conn.publish("doorbot.pir")
+                        self.__send("doorbot.pir")
                     elif len(msg) >= 5:
-                        conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
-                                     headers={"press_time": int(msg[3]*1000),
-                                              "reason": msg[4]})
+                        self.__send("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
+                                    headers={"press_time": int(msg[3]*1000),
+                                             "reason": msg[4]})
                     else:
-                        conn.publish("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
+                        self.__send("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
             except Exception, e:
-                logging.exception("Exception in MessageThread")
+                logging.exception("Exception in MessageThread.run")
                 time.sleep(1)
 
 # A state-machine to accept button-up/down events and detect short-long presses

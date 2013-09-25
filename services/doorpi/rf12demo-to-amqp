@@ -1,0 +1,129 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import base64
+import logging
+import hacksense
+import serial
+import threading
+import time
+
+device = '/dev/ttyUSB0'
+baud = 57600
+my_band = 868
+my_group = 38
+my_node = 1
+amqp_host = 'amqp.hacklab'
+amqp_exchange = 'events'
+
+#logging.getLogger().setLevel(logging.DEBUG)
+
+#connection = pika.BlockingConnection(pika.ConnectionParameters(host=amqp_host, heartbeat_interval=30))
+#channel = connection.channel()
+#channel.exchange_declare(exchange=amqp_exchange, type="topic")
+
+conn = hacksense.AMQPTopic()
+
+class TimeSignalThread(threading.Thread):
+    def run(self):
+        global ser
+        while True:
+            ser.write('116,%s,0 s\n' % (time.strftime('%H,%M,%S')))
+            ser.flush()
+            last_time_signal = time.time()
+            time.sleep(33)
+
+class BeaconThread(threading.Thread):
+    def run(self):
+        global ser
+        while True:
+            ser.write('46,58,0 s\n')
+            ser.flush()
+            last_time_signal = time.time()
+            time.sleep(10)
+
+class TxThread(threading.Thread):
+    def run(self):
+        while True:
+            try:
+                self.loop()
+            except:
+                pass
+            time.sleep(1)
+    def loop(self):
+        def callback(ch, method, properties, body):
+            global ser
+            data1 = map(ord, body)
+            data2 = ','.join(map(str, data1)) + ',0 s\n'
+            ser.write(data2)
+            ser.flush()
+        conn = hacksense.AMQPTopic()
+        conn.subscribe_callback(["rf12.send"], callback)
+
+# open serial and wait for the jeelink to respond
+ser = serial.Serial(device, baudrate=baud)
+ser.write('\n'); ser.flush()
+ser.readline()
+ser.write('\n'); ser.flush()
+
+# send configuration commands
+ser.write('1 q\n'); ser.flush()
+ser.write('%d b\n' % (int(str(my_band)[0]))); ser.flush()
+ser.write('%d g\n' % (my_group)); ser.flush()
+ser.write('%d i\n' % (my_node)); ser.flush()
+
+#timesignalthread = TimeSignalThread()
+#timesignalthread.daemon = True
+#timesignalthread.start()
+
+#beaconthread = BeaconThread()
+#beaconthread.daemon = True
+#beaconthread.start()
+
+txthread = TxThread()
+txthread.daemon = True
+txthread.start()
+
+while 1:
+    now = time.time()
+    line = ser.readline().rstrip()
+
+    print now, line
+    
+    if line.startswith('OK G '):
+        void, void, rf12_grp, rf12_hd, rf12_data = line.split(' ', 4)
+    elif line.startswith('OK '):
+        void, rf12_hdr, rf12_data = line.split(' ', 2)
+        rf12_grp = my_group
+    else:
+        continue
+
+    rf12_grp = int(rf12_grp)
+    rf12_hdr = int(rf12_hdr)
+    rf12_data = ''.join(map(lambda x: chr(int(x)), rf12_data.split(' ')))
+    node = rf12_hdr & 0x1f
+
+    msg_headers = {
+        "timestamp": int(now),
+        "band": my_band,
+        "line": line,
+        "network": rf12_grp,
+        "node": node,
+        "rf12_grp": rf12_grp,
+        "rf12_hdr": rf12_hdr,
+        "rf12_data": base64.b64encode(rf12_data)
+        }
+        
+    #channel.basic_publish(exchange=amqp_exchange,
+    #                      routing_key="rf12.received.raw",
+    #                      body=rf12_data,
+    #                      properties=pika.BasicProperties(
+    #                          timestamp=now,
+    #                          headers=msg_headers
+    #                          ))
+
+    conn.publish('rf12.received.raw', msg_headers, rf12_data)
+
+    print "%f %s %r %r" % (now, line, msg_headers, rf12_data)

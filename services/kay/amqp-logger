@@ -6,7 +6,18 @@ sys.path.insert(0, "/srv/hacksense/lib")
 import hacksense
 import time
 
-logfile = "/srv/hacksense/log/events.log"
+template_logfile = "/srv/hacksense/log/%Y%m%d.log"
+current_logfile = None
+log = None
+
+def writelog(message):
+    global current_logfile
+    global log
+    new_logfile = time.strftime(template_logfile, time.localtime())
+    if new_logfile != current_logfile:
+        log = open(new_logfile, 'a')
+    log.write(message + "\n")
+    log.flush()
 
 def callback(ch, method, properties, body):
     topic = method.routing_key
@@ -15,9 +26,7 @@ def callback(ch, method, properties, body):
     else:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(properties.timestamp))
     headers = properties.headers
-    log.write("%s %s %r %r\n" % (timestamp, topic, headers, body))
-    log.flush()
+    writelog("%s %s %r %r" % (timestamp, topic, headers, body))
 
-log = open(logfile, "a")
 conn = hacksense.AMQPTopic()
 conn.subscribe_callback("#", callback)

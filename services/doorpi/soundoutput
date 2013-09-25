@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import subprocess
+import time
 
 max_playtime  = 15
 
@@ -76,6 +77,14 @@ def callback(ch, method, properties, body):
     headers = properties.headers
 
     try:
+        try:
+           ttl = int(headers.get('ttl', 300))
+           age = time.time()-timestamp
+           if age > ttl:
+               logging.warn('ignoring stale request (age=%s, ttl=%s)' % (age, ttl))
+               return
+        except Exception, e:
+           logging.exception("Exception")
         if topic == "actions.speak":
             espeak(headers.get("data", body),
                    voice=headers.get("espeak_voice", espeak_default_voice),

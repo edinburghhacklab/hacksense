@@ -36,6 +36,30 @@ def callback(ch, method, properties, body):
         c = unpacked[1]/100.0 # temperature in celsius
         conn.publish('temperature.g1', {'temperature': str(c)})
 
+    if node == 11 and len(body) == 6:
+        # 3x temperature reading
+        unpacked = struct.unpack('=hhh', body)
+        a = unpacked[0]/100.0
+        b = unpacked[1]/100.0
+        c = unpacked[2]/100.0
+        conn.publish('laser.temperature', {'temp_a': str(a), 'temp_b': str(b), 'temp_c': str(c)})
+
+    if node == 11 and len(body) == 11:
+        # laser statistics
+        unpacked = struct.unpack('=?HHHHH', body)
+        active = unpacked[0]
+        power_time = unpacked[1]
+        session_time = unpacked[2]
+        cutting_time = unpacked[3]
+        analog_time = unpacked[4]
+        error_count = unpacked[5]
+        conn.publish('laser.monitor', {'active': active,
+                                       'power_time': power_time,
+                                       'session_time': session_time,
+                                       'cutting_time': cutting_time,
+                                       'analog_time': analog_time,
+                                       'error_count': error_count})
+
 os.environ['TZ'] = 'UTC'
 time.tzset()
 

@@ -9,6 +9,8 @@ import time
 
 hacksense.setup_logging(redirect=True)
 
+ttl = 5
+
 def callback(ch, method, properties, body):
     global conn
 
@@ -23,12 +25,13 @@ def callback(ch, method, properties, body):
         return
 
     if topic == 'doorbot.buttons.red.shortpress':
-        conn.publish('actions.speak', {'data': 'tomato',
-                                       'espeak_voice': 'en-rp'})
+        conn.publish('actions.play_sound', {"filename": "bingo.mp3", "ttl": ttl})
+        conn.publish('doorbot.lcd.display', {'line1': 'Bingo!', 'line2': '', 'flash': 2})
         conn.publish('doorbot.lcd.display', {'line1': 'Long-press to', 'line2': 'change status', 'flash': 2})
     elif topic == 'doorbot.buttons.green.shortpress':
         conn.publish('actions.speak', {'data': 'tomato',
-                                       'espeak_voice': 'en-us'})
+                                       'espeak_voice': 'en-us',
+                                       'ttl': ttl})
         conn.publish('doorbot.lcd.display', {'line1': 'Long-press to', 'line2': 'change status', 'flash': 2})
     else:
         return
