@@ -23,7 +23,7 @@ def callback(ch, method, properties, body):
         return
 
     if headers.get('authorized', False):
-        conn.publish('doorbot.lcd.display', {'line1': 'Hello', 'line2': headers.get('name', ''), 'flash': 3})
+        conn.publish('doorbot.lcd.display', {'line1': 'Hello Friend!', 'line2': '', 'flash': 2})
     else:
         s = '%-20s' % (headers.get('uid', ''))
         conn.publish('doorbot.lcd.display', {'line1': 'Unknown Card', 'line2': s[2:18], 'flash': 5})
