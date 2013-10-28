@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import os
+import time
+
+logdir = "/srv/hacksense/log/laser"
+
+class Logger(object):
+    def __init__(self, template):
+        self.template = template
+        self.current_filename = None
+        self.current_handle = None
+    def check(self):
+        new_filename = time.strftime(self.template, time.localtime())
+        if new_filename != self.current_filename:
+            self.current_handle = open(new_filename, 'a')
+    def write(self, line):
+        self.check()
+        self.current_handle.write(line + "\n")
+        self.current_handle.flush()
+
+def callback(ch, method, properties, body):
+    topic = method.routing_key
+    if properties.timestamp is None:
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    else:
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(properties.timestamp))
+    headers = properties.headers
+    
+    if topic == "laser.monitor":
+        mon_logger.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (timestamp, headers["power_time"], headers["session_time"], headers["cutting_time"], headers["analog_time"], headers.get("pulse_count", None), headers["error_count"], headers["active"], headers.get('analog_level', None)))
+    elif topic == "laser.temperature":
+        temp_logger.write("%s\t%s\t%s\t%s" % (timestamp, headers["temp_a"], headers["temp_b"], headers["temp_c"]))
+
+mon_logger = Logger(os.path.join(logdir, "monitor-%Y%m%d.log"))
+temp_logger = Logger(os.path.join(logdir, "temperature-%Y%m%d.log"))
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback(["laser.monitor", "laser.temperature"], callback)

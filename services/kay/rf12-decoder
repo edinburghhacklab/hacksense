@@ -29,12 +29,18 @@ def callback(ch, method, properties, body):
     if group != 38:
         return
 
+    # Temperature and LDR sensor in G1
     if node == 10 and len(body) == 3:
-        # temperature reading
         unpacked = struct.unpack('=Bh', body)
         i = unpacked[0] # index number of sensor
         c = unpacked[1]/100.0 # temperature in celsius
         conn.publish('temperature.g1', {'temperature': str(c)})
+    if node == 10 and len(body) == 4:
+        unpacked = struct.unpack('=hh', body)
+        c = unpacked[0]/100.0 # temperature in celsius
+        l = unpacked[1] # light level from 0-1023
+        conn.publish('temperature.g1', {'temperature': str(c)})
+        conn.publish('lightsensor.g1', {'light': l})
 
     if node == 11 and len(body) == 6:
         # 3x temperature reading
@@ -59,6 +65,42 @@ def callback(ch, method, properties, body):
                                        'cutting_time': cutting_time,
                                        'analog_time': analog_time,
                                        'error_count': error_count})
+    if node == 11 and len(body) == 13:
+        # laser statistics
+        unpacked = struct.unpack('=?HHHHHH', body)
+        active = unpacked[0]
+        power_time = unpacked[1]
+        session_time = unpacked[2]
+        cutting_time = unpacked[3]
+        analog_time = unpacked[4]
+        pulse_count = unpacked[5]
+        error_count = unpacked[6]
+        conn.publish('laser.monitor', {'active': active,
+                                       'power_time': power_time,
+                                       'session_time': session_time,
+                                       'cutting_time': cutting_time,
+                                       'analog_time': analog_time,
+                                       'pulse_count': pulse_count,
+                                       'error_count': error_count})
+    if node == 11 and len(body) == 15:
+        # laser statistics
+        unpacked = struct.unpack('=?HHHHHHH', body)
+        active = unpacked[0]
+        power_time = unpacked[1]
+        session_time = unpacked[2]
+        cutting_time = unpacked[3]
+        analog_time = unpacked[4]
+        pulse_count = unpacked[5]
+        error_count = unpacked[6]
+        analog_level = unpacked[7]
+        conn.publish('laser.monitor', {'active': active,
+                                       'power_time': power_time,
+                                       'session_time': session_time,
+                                       'cutting_time': cutting_time,
+                                       'analog_time': analog_time,
+                                       'pulse_count': pulse_count,
+                                       'error_count': error_count,
+                                       'analog_level': analog_level})
 
 os.environ['TZ'] = 'UTC'
 time.tzset()
