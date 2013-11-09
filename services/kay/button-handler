@@ -25,8 +25,7 @@ def callback(ch, method, properties, body):
         return
 
     if topic == 'doorbot.buttons.red.shortpress':
-        conn.publish('actions.play_sound', {"filename": "bingo.mp3", "ttl": ttl})
-        conn.publish('doorbot.lcd.display', {'line1': 'Bingo!', 'line2': '', 'flash': 2})
+        conn.publish('actions.play_sound', {"filename": "red_button/", "ttl": ttl})
         conn.publish('doorbot.lcd.display', {'line1': 'Long-press to', 'line2': 'change status', 'flash': 2})
     elif topic == 'doorbot.buttons.green.shortpress':
         conn.publish('actions.speak', {'data': 'tomato',

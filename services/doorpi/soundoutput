@@ -6,6 +6,7 @@ sys.path.insert(0, "/srv/hacksense/lib")
 import hacksense
 import logging
 import os
+import random
 import signal
 import subprocess
 import time
@@ -59,10 +60,34 @@ def espeak(data,
     command = ['espeak', '-s', str(int(speed)), '-p', str(int(pitch)), '-v', voice, data]
     call_with_timeout(command, timeout=timeout)
 
+def getfiles(path, exts=[".mp3", ".wav"]):
+    allfiles = []
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            base, ext = os.path.splitext(filename)
+            if ext in exts:
+                #allfiles.append(os.path.relpath(os.path.join(dirpath, filename), path))
+                allfiles.append(os.path.join(dirpath, filename))
+    return allfiles
+
 def play(filename, timeout=max_playtime):
+    allfiles = getfiles(sounds_path)
     filename = os.path.join(sounds_path, filename)
-    if not os.path.isfile(filename):
-        raise Exception('File %s not found' % (filename))
+
+    if filename.endswith('/'):
+        # pick a random file from a directory
+        candidates = []
+        for f in allfiles:
+            if f.startswith(filename):
+                candidates.append(f)
+        if len(candidates) == 0:
+            raise Exception('No files matching %s' % (filename))
+        filename = random.choice(candidates)
+    else:
+        # single file requested
+        if filename not in allfiles:
+            raise Exception('File %s not found' % (filename))
+
     base, ext = os.path.splitext(filename)
     if ext == '.mp3':
         command = ['mpg123', filename]
