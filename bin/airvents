@@ -1,0 +1,24 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import time
+
+def usage():
+    print "Usage: %s on" % (sys.argv[0])
+    print "       %s off" % (sys.argv[0])
+    sys.exit(1)
+
+conn = hacksense.AMQPTopic()
+
+if len(sys.argv) != 2:
+    usage()
+
+if sys.argv[1] == 'on':
+    conn.publish('rf12.send', {}, chr(51)+chr(88)+chr(1))
+elif sys.argv[1] == 'off':
+    conn.publish('rf12.send', {}, chr(51)+chr(88)+chr(0))
+else:
+    usage()

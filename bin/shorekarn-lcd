@@ -1,0 +1,23 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import time
+
+msg_prefix = chr(12)+chr(84)
+msg_type   = chr(0)
+null       = chr(0)
+
+def usage():
+    print 'Usage: %s "Hello World"' % (sys.argv[0])
+    sys.exit(1)
+
+conn = hacksense.AMQPTopic()
+
+if len(sys.argv) == 2:
+    msg_text = sys.argv[1]
+    conn.publish('rf12.send', {}, msg_prefix+msg_type+msg_text+null)
+else:
+    usage()
