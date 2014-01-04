@@ -33,6 +33,11 @@ event_queue = Queue.Queue()
 global message_queue
 message_queue = Queue.Queue()
 
+# PIR
+pir_count = 0
+pir_report_interval = 60
+pir_report_timestamp = 0
+
 # For testing, this sends dummy button events via event_queue
 class DummyEventThread(threading.Thread):
     def run(self):
@@ -108,6 +113,8 @@ class MessageThread(threading.Thread):
                     logging.debug("message> %r" % (msg,))
                     if msg[1] == "pir":
                         self.__send("doorbot.pir")
+                    elif msg[1] == "pir-count":
+                        self.__send("doorbot.pir-count", {"count": int(msg[2])})
                     elif len(msg) >= 5:
                         self.__send("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
                                     headers={"press_time": int(msg[3]*1000),
@@ -209,6 +216,8 @@ while True:
     try:
         e = event_queue.get(block=True, timeout=LONG_PRESS)
         message_queue.put(e)
+        if e[1] == 'pir':
+            pir_count += 1
         if e[1] == 'red':
             if e[2] == 'up':
                 red.up()
@@ -223,3 +232,8 @@ while True:
         # call the alarm() methods regularly so long-presses can be detected
         red.alarm()
         green.alarm()
+    
+    # send PIR counts regularly
+    if time.time()-pir_report_timestamp > pir_report_interval:
+        message_queue.put((time.time(), 'pir-count', pir_count))
+        pir_report_timestamp = time.time()
