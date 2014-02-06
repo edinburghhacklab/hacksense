@@ -4,7 +4,9 @@ import sys
 sys.path.insert(0, "/srv/hacksense/lib")
 
 import hacksense
+import json
 import logging
+import os
 import time
 import urllib
 import urllib2
@@ -24,6 +26,9 @@ irc_channel = "*DEFAULT*"
 
 # secrets for sending status to twitter (via http://edinhacklab.com/)
 twitter_secrets_file = '/srv/hacksense/etc/twitter_secrets.conf'
+
+# spaceapi output file
+spaceapi_json_path = '/srv/hacksense/var/spaceapi.json'
 
 last_activity = time.time()
 last_lcd = time.time()
@@ -49,6 +54,42 @@ def push_status_to_server(status):
             return True
         else:
             return False
+
+def write_spaceapi_json(status):
+    spaceapi = {
+        "api": "0.13",
+        "space": "Edinburgh Hacklab",
+        "logo": "http://edinburghhacklab.com/spaceapi/logo.png",
+        "url": "http://edinburghhacklab.com/",
+        "location": {"address": "1 Summerhall, Edinburgh, EH9 1PL, United Kingdom",
+                     "lat": 55.939797,
+                     "lon": -3.18162},
+        "state": {"open": False,
+                  "lastchange": int(time.time()),
+                  "icon": {"open": "http://edinburghhacklab.com/spaceapi/open.png",
+                           "closed": "http://edinburghhacklab.com/spaceapi/closed.png"}},
+        "contact": {
+            "phone": "+44 131 516 6856",
+            "irc": "irc://irc.freenode.net/#edinhacklab",
+            "twitter": "@edinhacklab",
+            "email": "info@edinburghhacklab.com",
+            "issue_mail": "servers@edinburghhacklab.com",
+            "facebook": "https://www.facebook.com/edinburghhacklab"},
+        "issue_report_channels": ["issue_mail"],
+        "projects": ["http://wiki.edinburghhacklab.com/", "https://github.com/edinburghhacklab"],
+        "feeds": {"blog": {"type": "rss", "url": "http://edinburghhacklab.com/feed/"},
+                  "calendar": {"type": "ical", "url": "https://www.google.com/calendar/ical/vo52ojfgltbpbkh8fk52vbhb90%40group.calendar.google.com/public/basic.ics"}}
+        }
+    if status == 'open':
+        spaceapi['state']['open'] = True
+    else:
+        spaceapi['state']['open'] = False
+    spaceapi['open'] = spaceapi['state']['open'] # for compatibility with older API
+    spaceapi['icon'] = spaceapi['state']['icon'] # for compatibility with older API
+    f = open(spaceapi_json_path + '.tmp', 'w')
+    json.dump(spaceapi, f, indent=2)
+    f.close()
+    os.rename(spaceapi_json_path + '.tmp', spaceapi_json_path)
 
 def lcd(line1, line2=""):
     global last_lcd
@@ -90,6 +131,7 @@ def set_status(new_status):
             logging.info("set to open, tweet failed")
             lcd("Status: Open", "Tweet failed")
             say("Sorry, I couldn't reach twitter")
+        write_spaceapi_json(new_status)
 
     elif new_status == "closed":
         rconn.set('hacksense:labstatus:timestamp', time.time())
@@ -105,6 +147,7 @@ def set_status(new_status):
             logging.info("set to closed, tweet failed")
             lcd("Status: Closed", "Tweet failed")
             say("Sorry, I couldn't reach twitter")
+        write_spaceapi_json(new_status)
 
 def ircstatus_callback(timestamp, topic, headers, body):
     global last_ircstatus
@@ -205,6 +248,11 @@ def callback(ch, method, properties, body):
 
     logging.info("%s %s %r" % (timestamp, topic, headers))
 
+    if topic == "update-spaceapi.open":
+        write_spaceapi_json("open")
+    if topic == "update-spaceapi.closed":
+        write_spaceapi_json("closed")
+
     if topic.startswith("doorbot.buttons.") or topic in ["doorbot.card.swipe", "doorbot.pir"]:
         activity_callback(timestamp, topic, headers, body)
 
@@ -224,4 +272,4 @@ def callback(ch, method, properties, body):
 
 rconn = hacksense.RedisConnection().redis
 conn = hacksense.AMQPTopic()
-conn.subscribe_callback(["timer.60", "doorbot.#", "irc.message"], callback)
+conn.subscribe_callback(["timer.60", "doorbot.#", "irc.message", "update-spaceapi.#"], callback)

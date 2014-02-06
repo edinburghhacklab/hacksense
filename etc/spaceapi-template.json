@@ -1,0 +1,46 @@
+{
+  "api": "0.13",
+  "logo": "http://edinburghhacklab.com/spaceapi/logo.png",
+  "projects": [
+    "http://wiki.edinburghhacklab.com/",
+    "https://github.com/edinburghhacklab"
+  ],
+  "icon": {
+    "open": "http://edinburghhacklab.com/spaceapi/open.png",
+    "closed": "http://edinburghhacklab.com/spaceapi/closed.png"
+  },
+  "space": "Edinburgh Hacklab",
+  "url": "http://edinburghhacklab.com/",
+  "issue_report_channels": [
+    "issue_mail"
+  ],
+  "state": {
+    "icon": {
+      "open": "http://edinburghhacklab.com/spaceapi/open.png",
+      "closed": "http://edinburghhacklab.com/spaceapi/closed.png"
+    }
+  },
+  "contact": {
+    "issue_mail": "servers@edinburghhacklab.com",
+    "twitter": "@edinhacklab",
+    "phone": "+44 131 516 6856",
+    "facebook": "https://www.facebook.com/edinburghhacklab",
+    "irc": "irc://irc.freenode.net/#edinhacklab",
+    "email": "info@edinburghhacklab.com"
+  },
+  "location": {
+    "lat": 55.939797,
+    "lon": -3.18162,
+    "address": "1 Summerhall, Edinburgh, EH9 1PL, United Kingdom"
+  },
+  "feeds": {
+    "blog": {
+      "url": "http://edinburghhacklab.com/feed/",
+      "type": "rss"
+    },
+    "calendar": {
+      "url": "https://www.google.com/calendar/ical/vo52ojfgltbpbkh8fk52vbhb90%40group.calendar.google.com/public/basic.ics",
+      "type": "ical"
+    }
+  }
+}
