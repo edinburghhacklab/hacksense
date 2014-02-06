@@ -1,0 +1,161 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import logging
+import time
+
+from rhapsody import *
+
+hacksense.setup_logging(redirect=True)
+
+RHAPSODY_HOST = '10.38.38.40'
+RHAPSODY_PORT = 10001
+
+current_temperature = 0.0
+submessages_top = {}
+submessages_bottom = {}
+submessage_timeout = 600
+
+def justify(size, left='', right=''):
+    spaces = size-len(left)-len(right)
+    if spaces > 0:
+        return left + ' '*spaces + right
+    else:
+        return left + right
+
+def callback(ch, method, properties, body):
+    global conn
+    global current_temperature
+
+    topic = method.routing_key
+    timestamp = properties.timestamp
+    headers = properties.headers
+
+    logging.info("%s %s %r" % (timestamp, topic, headers))
+
+    if time.time()-timestamp > 10:
+        # ignore old events
+        return
+
+    r = Rhapsody(RHAPSODY_HOST, RHAPSODY_PORT)
+    display_width = 4
+    normal_char_width = 32
+
+    # should we update line 2?
+    update_line2 = False
+
+    # should we update submessages
+    update_submessages_top = False
+    update_submessages_bottom = False
+
+    if topic == "timer.60":
+        update_line2 = True
+        # expire old submessages
+        for k in submessages_top.keys():
+            if submessages_top[k]['timestamp'] < time.time()-submessage_timeout:
+                del submessages_top[k]
+                update_submessages_top = True
+        for k in submessages_bottom.keys():
+            if submessages_bottom[k]['timestamp'] < time.time()-submessage_timeout:
+                del submessages_bottom[k]
+                update_submessages_top = True
+    elif topic == "timer.3600":
+        r.send(r.set_time())
+    elif topic == "temperature.g1":
+        current_temperature = float(headers['temperature'])
+        update_line2 = True
+    elif topic == "rhapsody.reset":
+        r.send(r.configure_display(display_width, [16, 8]))
+        r.send(r.page(1, [r.line(1, LARGE_FONT+RED+APPEAR_SCROLL+"Edinburgh Hacklab"),
+                          r.line(2, NORMAL_FONT+RED+APPEAR_JUMP+
+                                 justify(normal_char_width, 'edinburghhacklab.com', chr(176)+chr(177)+':'+chr(178)+chr(179)))]))
+    elif topic == "rhapsody.raw":
+        r.send(body)
+    elif topic == "rhapsody.simple":
+        prefix = LARGE_FONT+APPEAR_SCROLL
+        if headers.has_key('colour'):
+            if headers['colour'] == 'red':
+                prefix += RED
+            elif headers['colour'] == 'yellow':
+                prefix += YELLOW
+            elif headers['colour'] == 'green':
+                prefix += GREEN
+            else:
+                prefix += RED
+        r.send(r.page(1, [r.line(1, prefix+body)]))
+    elif topic == "rhapsody.submessage":
+        sub_id = headers.get('submessage_id', None)
+        sub_pri = headers.get('submessage_priority', 10)
+        sub_colour = headers.get('colour', None)
+        if sub_id:
+            submessages_top[sub_id] = {'priority': sub_pri, 'colour': sub_colour, 'message': body, 'timestamp': timestamp}
+            update_submessages_top = True
+    elif topic == "rhapsody.submessage.bottom":
+        sub_id = headers.get('submessage_id', None)
+        sub_pri = headers.get('submessage_priority', 10)
+        sub_colour = headers.get('colour', None)
+        if sub_id:
+            submessages_bottom[sub_id] = {'priority': sub_pri, 'colour': sub_colour, 'message': body, 'timestamp': timestamp}
+            update_submessages_bottom = True
+    if update_line2:
+        #submessages_bottom['temperature'] = {'priority': 1, 'colour': 'red', 'message':
+        #                                     justify(normal_char_width,
+        #                                             '%.1f\xAAC' % (current_temperature),
+        #                                             chr(176)+chr(177)+':'+chr(178)+chr(179))}
+        #update_submessages_bottom = True
+        r.send(r.page(1, [r.line(2, NORMAL_FONT+RED+APPEAR_JUMP+
+                                 justify(normal_char_width,
+                                         '%.1f\xAAC' % (current_temperature),
+                                         chr(176)+chr(177)+':'+chr(178)+chr(179)))]))
+    if update_submessages_top:
+        prefix = LARGE_FONT+APPEAR_SCROLL
+        output = []
+        if len(submessages_top) > 0:
+            for k in sorted(submessages_top.keys(),
+                            cmp=lambda a, b: cmp(submessages_top[a]['priority'], submessages_top[b]['priority'])):
+                m = submessages_top[k]
+                if m['colour'] == 'red':
+                    output.append(RED+m['message'])
+                elif m['colour'] == 'yellow':
+                    output.append(YELLOW+m['message'])
+                elif m['colour'] == 'green':
+                    output.append(GREEN+m['message'])
+                else:
+                    output.append(RED+m['message'])
+        else:
+            output.append(YELLOW+'Edinburgh Hacklab')
+        r.send(r.page(1, [r.line(1, prefix+'   '.join(output))]))
+    if update_submessages_bottom:
+        prefix = APPEAR_VERTICAL
+        output = []
+        if len(submessages_bottom) > 0:
+            for k in sorted(submessages_bottom.keys(),
+                            cmp=lambda a, b: cmp(submessages_bottom[a]['priority'], submessages_bottom[b]['priority'])):
+                m = submessages_bottom[k]
+                if m['colour'] == 'red':
+                    output.append(RED+m['message'])
+                elif m['colour'] == 'yellow':
+                    output.append(YELLOW+m['message'])
+                elif m['colour'] == 'green':
+                    output.append(GREEN+m['message'])
+                else:
+                    output.append(RED+m['message'])
+        else:
+            pass
+        page = 0
+        for m in output:
+            page += 1
+            #r.send(r.page(page, [r.line(2, prefix+m)]))
+
+def startup():
+    # send the time at startup
+    r = Rhapsody(RHAPSODY_HOST, RHAPSODY_PORT)
+    r.send(r.set_time())
+
+startup()
+
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback(["rhapsody.reset", "rhapsody.raw", "rhapsody.simple", "rhapsody.submessage", "rhapsody.submessage.bottom", "temperature.g1", "timer.60", "timer.3600"], callback)
