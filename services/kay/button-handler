@@ -11,8 +11,11 @@ hacksense.setup_logging(redirect=True)
 
 ttl = 5
 
+current_dali_preset = 0
+
 def callback(ch, method, properties, body):
     global conn
+    global current_dali_preset
 
     topic = method.routing_key
     timestamp = properties.timestamp
@@ -26,12 +29,10 @@ def callback(ch, method, properties, body):
 
     if topic == 'doorbot.buttons.red.shortpress':
         conn.publish('actions.play_sound', {"filename": "red_button/", "ttl": ttl})
-        conn.publish('doorbot.lcd.display', {'line1': 'Long-press to', 'line2': 'change status', 'flash': 2})
+        #conn.publish('doorbot.lcd.display', {'line1': 'Long-press to', 'line2': 'change status', 'flash': 2})
     elif topic == 'doorbot.buttons.green.shortpress':
-        conn.publish('actions.speak', {'data': 'tomato',
-                                       'espeak_voice': 'en-us',
-                                       'ttl': ttl})
-        conn.publish('doorbot.lcd.display', {'line1': 'Long-press to', 'line2': 'change status', 'flash': 2})
+        current_dali_preset += 1
+        conn.publish('dali.preset', {'preset': current_dali_preset}, '')
     else:
         return
 
