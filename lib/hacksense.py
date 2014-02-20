@@ -81,7 +81,7 @@ class AMQPTopic(object):
         h.update(text)
         return h.hexdigest()
 
-    def publish(self, topic, headers={}, body="", retry=False, key=None):
+    def publish(self, topic, headers={}, body="", retry=False, key=None, immediate=False):
         new_headers = headers.copy()
         new_headers['src_hostname'] = socket.getfqdn()
         new_headers['src_script'] = sys.argv[0]
@@ -99,6 +99,7 @@ class AMQPTopic(object):
                     self.channel.basic_publish(exchange=amqp_exchange,
                                                routing_key=topic,
                                                body=body,
+                                               immediate=immediate,
                                                properties=pika.BasicProperties(
                                                    timestamp=timestamp,
                                                    headers=new_headers
