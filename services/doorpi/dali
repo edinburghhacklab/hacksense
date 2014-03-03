@@ -14,7 +14,8 @@ import Queue
 #logging.getLogger().setLevel(logging.INFO)
 hacksense.setup_logging(redirect=True)
 
-dali_serial_device = '/dev/serial/by-id/usb-Arduino_LLC_Arduino_Leonardo-if00'
+#dali_serial_device = '/dev/serial/by-id/usb-Arduino_LLC_Arduino_Leonardo-if00'
+dali_serial_device = '/dev/serial/by-path/platform-bcm2708_usb-usb-0:1.3.1.3:1.0'
 dali_serial_baud = 57600
 
 serial_queue = Queue.Queue(maxsize=10)
@@ -169,9 +170,18 @@ def callback(ch, method, properties, body):
         #ser.write(chr(len(buf)) + buf + chr(0))
         #ser.flush()
 
+    elif topic == "setting.g1.lights.preset":
+        buf = compile_preset(body)
+        output = chr(len(buf)) + buf + chr(0)*serial_zeros
+        logging.info("> %r" % (output))
+        try:
+            serial_queue.put(output)
+        except Queue.Full:
+            logging.warning("discarding serial packet: %r" % (output))
+
 serial_thread = SerialThread()
 serial_thread.daemon = True
 serial_thread.start()
 
 conn = hacksense.AMQPTopic()
-conn.subscribe_callback("dali.#", callback)
+conn.subscribe_callback(["dali.#", "setting.g1.lights.preset"], callback)

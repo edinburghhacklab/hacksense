@@ -1,0 +1,246 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import logging
+import serial
+import threading
+import time
+import Queue
+
+logging.basicConfig()
+logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger('pika').setLevel(logging.INFO)
+hacksense.setup_logging(redirect=True)
+
+# Serial settings
+#serial_device = '/dev/serial/by-id/usb-Arduino_LLC_Arduino_Leonardo-if00'
+serial_device = '/dev/serial/by-path/platform-bcm2708_usb-usb-0:1.3.1.1:1.0'
+serial_baud = 115200
+
+# Define some device constants
+LCD_WIDTH = 16    # Maximum characters per line
+
+# How long must a button be held for a "long press" (in seconds)
+LONG_PRESS = 1.0
+
+# A cross-thread queue containing messages to be sent to the Hacksense network
+message_queue = Queue.Queue()
+
+# PIR
+pir_count = 0
+pir_report_interval = 60
+pir_report_timestamp = 0
+
+# LCD buffer (to allow reverting to previous screen)
+current_line1 = " "*LCD_WIDTH
+current_line2 = " "*LCD_WIDTH
+
+# A state-machine to accept button-up/down events and detect short-long presses
+class Button(object):
+
+    STATE_UP   = 0 # Button is up
+    STATE_DOWN = 1 # Button is down, pending release or long-press timeout
+    STATE_WAIT = 2 # Button is down, event processed and waiting for release to reset the cycle
+
+    def __init__(self, long_press=1.0, short_callback=None, long_callback=None):
+        self.long_press = long_press
+        self.short_callback = short_callback
+        self.long_callback = long_callback
+        self.state = self.STATE_UP
+        self.state_change = time.time()
+
+    def debug(self, message):
+        logging.debug("%s %f %s" % (self, time.time(), message))
+
+    def down(self):
+        if self.state == self.STATE_UP:
+            self.state = self.STATE_DOWN
+            self.state_change = time.time()
+            self.debug("UP -> DOWN")
+
+    # This method is called from a timeout-event, which allows
+    # us to detect a long-press *before* the button is released.
+    #
+    # If we waited for a button-up event then the user would need
+    # to time their long-presses. By using a timeout we can allow 
+    # events to provide feedback to the user, allowing them to release
+    # the button after an action has started.
+    def alarm(self):
+        if self.state == self.STATE_DOWN:
+            press_time = time.time()-self.state_change
+            if press_time >= self.long_press:
+                self.state = self.STATE_WAIT
+                self.state_change = time.time()
+                self.debug("DOWN -> WAIT (long press detected via timeout, %.3fs)" % (press_time))
+                if self.long_callback:
+                    self.long_callback(press_time=press_time, reason="timeout")
+
+    def up(self):
+        if self.state == self.STATE_WAIT:
+            self.state = self.STATE_UP
+            self.state_change = time.time()
+            self.debug("WAIT -> UP")
+        elif self.state == self.STATE_DOWN:
+            press_time = time.time()-self.state_change
+            if press_time >= self.long_press:
+                self.state = self.STATE_UP
+                self.state_change = time.time()
+                self.debug("DOWN -> UP (long press detected via button-up, %.3fs)" % (press_time))
+                if self.long_callback:
+                    self.long_callback(press_time=press_time, reason="button-up")
+            else:
+                self.state = self.STATE_UP
+                self.state_change = time.time()
+                self.debug("DOWN -> UP (short press, %.3fs)" % (press_time))
+                if self.short_callback:
+                    self.short_callback(press_time=press_time, reason="button-up")
+
+# This reads output events from message_queue and sends them to Hacksense
+class MessageThread(threading.Thread):
+    def __send(self, topic, headers={}, body=""):
+        attempt = 1
+        while True:
+            try:
+                self.__conn.publish(topic, headers, body)
+                if attempt > 1:
+                    logging.warning("__send succeeded on attempt %s" % (attempt))
+                return
+            except:
+                logging.exception("Exception in MessageThread.__send")
+                time.sleep(1)
+                attempt += 1
+                self.__conn = hacksense.AMQPTopic()
+    def run(self):
+        while True:
+            try:
+                logging.debug("connecting to AMQP")
+                self.__conn = hacksense.AMQPTopic()
+                self.__send("meta.message", {}, "doorbot button-reader is starting")
+                while True:
+                    msg = message_queue.get() # timestamp, button, action, press_time
+                    logging.debug("message> %r" % (msg,))
+                    if msg[1] == "pir":
+                        self.__send("doorbot.pir")
+                    elif msg[1] == "pir-count":
+                        self.__send("doorbot.pir-count", {"count": int(msg[2])})
+                    elif len(msg) >= 5:
+                        self.__send("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
+                                    headers={"press_time": int(msg[3]*1000),
+                                             "reason": msg[4]})
+                    else:
+                        self.__send("doorbot.buttons.%s.%s" % (msg[1], msg[2]))
+            except Exception, e:
+                logging.exception("Exception in MessageThread.run")
+                time.sleep(1)
+
+class LCDThread(threading.Thread):
+
+    def run(self):
+        while True:
+            try:
+                self.loop()
+            except:
+                pass
+            time.sleep(1)
+
+    def loop(self):
+
+        def callback(ch, method, properties, body):
+            global ser
+            global current_line1
+            global current_line2
+
+            topic = method.routing_key
+            timestamp = properties.timestamp or time.time()
+            headers = properties.headers
+
+            line1 = headers.get("line1", "").ljust(LCD_WIDTH," ")[0:LCD_WIDTH]
+            line2 = headers.get("line2", "").ljust(LCD_WIDTH," ")[0:LCD_WIDTH]
+            ser.write(chr(1) + line1 + "\n")
+            ser.write(chr(2) + line2 + "\n")
+            ser.flush()
+    
+            if headers.has_key("flash"):
+                # sleep for the requested time
+                try:
+                    time.sleep(float(headers["flash"]))
+                except ValueError:
+                    time.sleep(2)
+                # write the old line data back to the display
+                ser.write(chr(1) + current_line1 + "\n")
+                ser.write(chr(2) + current_line2 + "\n")
+            else:
+                current_line1 = line1
+                current_line2 = line2
+                
+            if headers.has_key("pause"):
+                try:
+                    time.sleep(float(headers["pause"]))
+                except ValueError:
+                    pass
+            
+        conn = hacksense.AMQPTopic()
+        conn.subscribe_callback(["doorbot.lcd.display"], callback)
+
+ser = serial.Serial(serial_device, baudrate=serial_baud, timeout=0.5)
+
+# Initialise the AMQP->Serial LCD thread
+lcdthread = LCDThread()
+lcdthread.daemon = True
+lcdthread.start()
+
+# Initialise the AMQP event consumer thread
+messagethread = MessageThread()
+messagethread.daemon = True
+messagethread.start()
+
+conn = hacksense.AMQPTopic()
+
+# Callbacks for Button() instances
+def red_short(press_time, reason=None):
+    message_queue.put((time.time(), 'red', 'shortpress', press_time, reason))
+def red_long(press_time, reason=None):
+    message_queue.put((time.time(), 'red', 'longpress', press_time, reason))
+def green_short(press_time, reason=None):
+    message_queue.put((time.time(), 'green', 'shortpress', press_time, reason))
+def green_long(press_time, reason=None):
+    message_queue.put((time.time(), 'green', 'longpress', press_time, reason))
+
+red = Button(long_press=LONG_PRESS, short_callback=red_short, long_callback=red_long)
+green = Button(long_press=LONG_PRESS, short_callback=green_short, long_callback=green_long)
+
+while True:
+
+    line = ser.readline().rstrip()
+    print line
+    if line == 'RED_DOWN':
+        message_queue.put((time.time(), 'red', 'down'))
+        red.down()
+    elif line == 'RED_UP':
+        message_queue.put((time.time(), 'red', 'up'))
+        red.up()
+    elif line == 'GREEN_DOWN':
+        message_queue.put((time.time(), 'green', 'down'))
+        green.down()
+    elif line == 'GREEN_UP':
+        message_queue.put((time.time(), 'green', 'up'))
+        green.up()
+    elif line == 'PIR_ON':
+        message_queue.put((time.time(), 'pir', ''))
+        pir_count += 1
+    elif len(line) > 0:
+        print "Unknown: %r" % (line)
+    #else:
+    #    print "No data"
+
+    # call alarm methods regularly to detect long presses
+    red.alarm()
+    green.alarm()
+
+    # send PIR counts regularly
+    #if time.time()-pir_report_timestamp > pir_report_interval:
+    #    message_queue.put((time.time(), 'pir-count', pir_count))
+    #    pir_report_timestamp = time.time()
