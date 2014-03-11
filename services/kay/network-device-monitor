@@ -1,0 +1,205 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.insert(0, "/srv/hacksense/lib")
+
+import hacksense
+import json
+import logging
+import os
+import re
+import socket
+import time
+
+#logging.basicConfig()
+#logging.getLogger().setLevel(logging.INFO)
+hacksense.setup_logging(redirect=True)
+
+# database = {
+#     '01:02:03:04:05:06': {
+#         'first_seen': epoch_timestamp,
+#         'session_start': epoch_timestamp,
+#         'last_seen': epoch_timestamp,
+#         'ip': '1.2.3.4',
+#         'ips': [],
+#         'hostname': 'example',
+#         'hostnames': [],
+#         'present': True,
+#         'session_count': 123
+#     }
+# }
+
+timeout = 600
+json_cache_filename = '/srv/hacksense/var/network-devices.json'
+
+try:
+    database = json.load(open(json_cache_filename, "r"))
+except IOError:
+    database = {}
+
+def friendly_time(t):
+    if t > 86400:
+        return '%dd' % (t/86400)
+    elif t > 3600:
+        return '%dh' % (t/3600)
+    elif t > 60:
+        return '%dm' % (t/60)
+    else:
+        return '%ds' % (t)
+
+def save_database():
+    json.dump(database, open(json_cache_filename+".tmp", "w"))
+    os.rename(json_cache_filename+".tmp", json_cache_filename)
+
+def import_oui(filename):
+    oui_re = re.compile(r'^\s*(\w\w-\w\w-\w\w)\s+\(hex\)\s+(.+)\s*$')
+    data = {}
+    for line in open(filename, "r"):
+        m = oui_re.match(line)
+        if m:
+            data[m.group(1).replace("-", ":").lower()] = m.group(2)
+    return data
+
+def isotime(t, short=False, utc=False):
+    if utc:
+        if short:
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+        else:
+            return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(t))
+    else:
+        if short:
+            return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+        else:
+            return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+
+def ip2hostname(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0].split('.', 1)[0]
+    except:
+        pass
+
+def callback(ch, method, properties, body):
+    global conn
+
+    topic = method.routing_key
+    timestamp = properties.timestamp
+    headers = properties.headers
+
+    #logging.info("%s %s %r" % (timestamp, topic, headers))
+
+    if topic == "network.arp-sighting":
+        return arp_callback(topic, timestamp, headers, body)
+    if topic == "timer.60":
+        return timer_callback(topic, timestamp, headers, body)
+
+def arp_callback(topic, timestamp, headers, body):
+
+    ip = headers['ip']
+    mac = headers['mac'].lower()
+    org = oui.get(mac[0:8].lower(), None)
+    hostname = ip2hostname(ip)
+
+    if database.has_key(mac):
+        last_seen = timestamp-database[mac]['last_seen']
+        if database[mac]['present'] is True:
+            pass
+            #print "%s (%s) is still here" % (mac, hostname)
+            # just an update
+            #if database[mac]['ip'] != ip:
+            #    print "%s (%s) has changed ip from %s to %s" % (mac, hostname, database[mac]['ip'], ip)
+        else:
+            # device returning to us
+            database[mac]['session_start'] = timestamp
+            database[mac]['session_count'] += 1
+            logging.info("%s %s %s (%s) has returned (last seen %s ago)" % (isotime(timestamp), mac, hostname, org, friendly_time(last_seen)))
+            conn.publish("network.device-online", {"mac": mac,
+                                                   "ip": ip,
+                                                   "hostname": hostname,
+                                                   "org": org,
+                                                   "last_seen": database[mac]['last_seen'],
+                                                   "session_start": database[mac]['session_start'],
+                                                   "session_count": database[mac]['session_count'],
+                                                   "new_device": False}, "")
+            database[mac]['ips'] = []
+            database[mac]['hostnames'] = []
+            #if database[mac]['hostname'] != hostname:
+            #    print "%s has changed hostname from %s to %s" % (mac, database[mac]['hostname'], hostname)
+    else:
+        # new device
+        logging.info("%s %s %s (%s) is a new device" % (isotime(timestamp), mac, hostname, org))
+        conn.publish("network.device-online", {"mac": mac,
+                                               "ip": ip,
+                                               "hostname": hostname,
+                                               "org": org,
+                                               "session_start": timestamp,
+                                               "session_count": 1,
+                                               "new_device": True}, "")
+        database[mac] = {'first_seen': timestamp, 'session_start': timestamp, "session_count": 1, 'ips': [], 'hostnames': [], 'org': org}
+ 
+    database[mac]['last_seen'] = timestamp
+    database[mac]['ip'] = ip
+    database[mac]['hostname'] = hostname
+    database[mac]['present'] = True
+
+    try:
+        database[mac]['ips'].index(ip)
+    except ValueError:
+        database[mac]['ips'].append(ip)
+    try:
+        database[mac]['hostnames'].index(hostname)
+    except ValueError:
+        database[mac]['hostnames'].append(hostname)
+
+    # remove any stray None values
+    try:
+        database[mac]['ips'].remove(None)
+    except ValueError:
+        pass
+    try:
+        database[mac]['ips'].remove('0.0.0.0')
+    except ValueError:
+        pass
+    try:
+        database[mac]['hostnames'].remove(None)
+    except ValueError:
+        pass
+    #try:
+    #    database[mac]['hostnames'].remove('None')
+    #except ValueError:
+    #    pass
+
+    save_database()
+
+def timer_callback(topic, timestamp, headers, body):
+    
+    for mac in database.keys():
+        if database[mac]['present'] == True and database[mac]['last_seen'] < time.time()-timeout:
+            logging.info("%s %s %s has gone (session time %s)" % (isotime(timestamp), mac, database[mac]['hostname'],
+                                                           friendly_time(database[mac]['last_seen']-database[mac]['session_start'])))
+            conn.publish("network.device-offline", {"mac": mac,
+                                                    "ip": database[mac]['ip'],
+                                                    "hostname": database[mac]['hostname'],
+                                                    "org": database[mac]['org'],
+                                                    "session_start": database[mac]['session_start'],
+                                                    "session_end": database[mac]['last_seen']}, "")
+            database[mac]['present'] = False
+            save_database()
+
+#for mac in database.keys():
+#    if not database[mac].has_key('ips'):
+#        database[mac]['ips'] = []
+#    if not database[mac].has_key('hostnames'):
+#        database[mac]['hostnames'] = []
+#    #if database[mac]'present'] is True:
+#        #database[mac]['session_start'] = database[mac]['first_seen']
+#    database[mac]['session_count'] = 1
+#save_database()
+
+oui = import_oui("/srv/hacksense/etc/oui.txt")
+
+#for mac in database.keys():
+#    org = oui.get(mac[0:8], None)
+#    database[mac]['org'] = org
+
+conn = hacksense.AMQPTopic()
+conn.subscribe_callback(["timer.60", "network.arp-sighting"], callback)

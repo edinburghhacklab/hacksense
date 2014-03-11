@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+
+import json
+import time
+
+json_cache_filename = '/srv/hacksense/var/network-devices.json'
+database = json.load(open(json_cache_filename, "r"))
+
+def friendly_time(t):
+    if t > 86400:
+        return '%dd' % (t/86400)
+    elif t > 3600:
+        return '%dh' % (t/3600)
+    elif t > 60:
+        return '%dm' % (t/60)
+    else:
+        return '%ds' % (t)
+
+output = []
+
+for mac in database.keys():
+    if database[mac]['present'] is True:
+        output.append((database[mac]['session_count'],
+                       time.time()-database[mac]['session_start'],
+                       time.time()-database[mac]['last_seen'],
+                       mac,
+                       '/'.join(map(str, database[mac]['hostnames'])),
+                       '/'.join(map(str, database[mac]['ips'])),
+                       database[mac]['org']))
+
+for line in sorted(output, cmp=lambda a, b: cmp(b[1], a[1])):
+    print "%4d %6s %6s %s %-40s %-20s (%s)" % (line[0],
+                                          friendly_time(line[1]),
+                                          friendly_time(line[2]),
+                                          line[3],
+                                          line[4],
+                                          line[5],
+                                          line[6])
+
+print
+
+output = []
+
+for mac in database.keys():
+    if database[mac]['present'] is False:
+        output.append((database[mac]['session_count'],
+                       time.time()-database[mac]['last_seen'],
+                       mac,
+                       database[mac]['ip'],
+                       database[mac]['hostname'],
+                       database[mac]['org']))
+
+for line in sorted(output, cmp=lambda a, b: cmp(a[1], b[1])):
+    print "%4d %6s  %s  %-12s  %s (%s)" % (line[0],
+                                      friendly_time(line[1]),
+                                      line[2],
+                                      line[3],
+                                      line[4],
+                                      line[5])
