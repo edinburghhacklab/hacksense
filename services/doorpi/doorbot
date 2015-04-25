@@ -148,7 +148,7 @@ class LCDThread(threading.Thread):
 
     def loop(self):
 
-        def callback(ch, method, properties, body):
+        def display(ch, method, properties, body):
             global ser
             global current_line1
             global current_line2
@@ -181,9 +181,38 @@ class LCDThread(threading.Thread):
                     time.sleep(float(headers["pause"]))
                 except ValueError:
                     pass
+                    
+        def backlight(ch, method, properties, body):
+            global ser
+
+            topic = method.routing_key
+            timestamp = properties.timestamp or time.time()
+            headers = properties.headers
+
+            ser.write(chr(3) + chr(int(headers["backlight"])) + "\n")
+            ser.flush()
             
+        def contrast(ch, method, properties, body):
+            global ser
+
+            topic = method.routing_key
+            timestamp = properties.timestamp or time.time()
+            headers = properties.headers
+
+            ser.write(chr(4) + chr(int(headers["contrast"])) + "\n")
+            ser.flush()
+            
+        def callback(ch, method, properties, body):
+            topic = method.routing_key
+            if topic == "doorbot.lcd.display":
+                return display(ch, method, properties, body)
+            elif topic == "doorbot.lcd.backlight":
+                return backlight(ch, method, properties, body)
+            elif topic == "doorbot.lcd.contrast":
+                return contrast(ch, method, properties, body)
+
         conn = hacksense.AMQPTopic()
-        conn.subscribe_callback(["doorbot.lcd.display"], callback)
+        conn.subscribe_callback(["doorbot.lcd.display", "doorbot.lcd.backlight", "doorbot.lcd.contrast"], callback)
 
 ser = serial.Serial(serial_device, baudrate=serial_baud, timeout=0.5)
 

@@ -11,6 +11,8 @@ import sys
 sys.path.insert(0, "/srv/hacksense/lib")
 import hacksense
 
+#logging.basicConfig()
+#logging.getLogger().setLevel(logging.DEBUG)
 hacksense.setup_logging(redirect=True)
 
 # PIN IDs for buttons attached to Raspberry Pi GPIO
@@ -35,8 +37,10 @@ message_queue = Queue.Queue()
 
 # PIR
 pir_count = 0
+pir_count_previous = 0
 pir_report_interval = 60
 pir_report_timestamp = 0
+pir_last_send = 0
 
 # For testing, this sends dummy button events via event_queue
 class DummyEventThread(threading.Thread):
@@ -84,7 +88,7 @@ class EventThread(threading.Thread):
                                     edge="both",
                                     pull_up_down=RPIO.PUD_UP,
                                     threaded_callback=False,
-                                    debounce_timeout_ms=DEBOUNCE_TIMEOUT)
+                                    debounce_timeout_ms=500)
         RPIO.wait_for_interrupts(threaded=False)
 
 # This reads output events from message_queue and sends them to Hacksense
@@ -103,6 +107,7 @@ class MessageThread(threading.Thread):
                 attempt += 1
                 self.__conn = hacksense.AMQPTopic()
     def run(self):
+        global pir_last_send
         while True:
             try:
                 logging.debug("connecting to AMQP")
@@ -112,9 +117,11 @@ class MessageThread(threading.Thread):
                     msg = message_queue.get() # timestamp, button, action, press_time
                     logging.debug("message> %r" % (msg,))
                     if msg[1] == "pir":
-                        self.__send("doorbot.pir")
+                        if time.time()-pir_last_send > 5:
+                            self.__send("doorbot.pir")
+                            pir_last_send = time.time()
                     elif msg[1] == "pir-count":
-                        self.__send("doorbot.pir-count", {"count": int(msg[2])})
+                        self.__send("doorbot.pir-count", {"count": int(msg[2]), "counts_per_minute": int(msg[3])})
                     elif len(msg) >= 5:
                         self.__send("doorbot.buttons.%s.%s" % (msg[1], msg[2]),
                                     headers={"press_time": int(msg[3]*1000),
@@ -235,5 +242,15 @@ while True:
     
     # send PIR counts regularly
     if time.time()-pir_report_timestamp > pir_report_interval:
-        message_queue.put((time.time(), 'pir-count', pir_count))
+        c = pir_count
+        if pir_report_timestamp > 0:
+            counts_per_minute = (c-pir_count_previous)/(time.time()-pir_report_timestamp)*60
+            if counts_per_minute > 0 and counts_per_minute < 1:
+                counts_per_minute = 1
+            else:
+                counts_per_minute = int(counts_per_minute)
+        else:
+            counts_per_minute = 0
+        message_queue.put((time.time(), 'pir-count', c, counts_per_minute))
         pir_report_timestamp = time.time()
+        pir_count_previous = c
